@@ -1518,9 +1518,8 @@ document.getElementById('ms-btn-promote').addEventListener('click', async () => 
   const nextRole = currentRole === 'barista' ? 'manager' : 'barista';
   const nextLabel = nextRole.charAt(0).toUpperCase() + nextRole.slice(1);
   if(!await confirm('Promote', `Promote this staff member to ${nextLabel}?`)) return;
-  u.role_type = nextRole;
-  u.role = nextRole === 'manager' ? 'admin' : 'staff';
-  DB.set('users', users);
+  const _promoteRole = nextRole === 'manager' ? 'admin' : 'staff';
+  DB.update('users', u.id, { role_type: nextRole, role: _promoteRole });
   showToast(`Promoted to ${nextLabel}.`, 'success');
   openStaffDetail(_msCurrentId);
 });
@@ -1532,8 +1531,7 @@ document.getElementById('ms-btn-admin').addEventListener('click', async () => {
   if(!u) return;
   const granting = !u.admin_access;
   if(!await confirm(granting ? 'Allow Admin Access' : 'Revoke Admin Access', granting ? 'Grant admin access to this user?' : 'Revoke admin access from this user?')) return;
-  u.admin_access = granting;
-  DB.set('users', users);
+  DB.update('users', u.id, { admin_access: granting });
   showToast(granting ? 'Admin access granted.' : 'Admin access revoked.', 'success');
   openStaffDetail(_msCurrentId);
 });
@@ -1541,7 +1539,9 @@ document.getElementById('ms-btn-admin').addEventListener('click', async () => {
 document.getElementById('ms-btn-terminate').addEventListener('click', async () => {
   if(!_msCurrentId) return;
   if(!await confirm('Terminate Staff','Remove this staff member from the system?')) return;
-  DB.set('users', DB.get('users').filter(x => x.account_id !== _msCurrentId));
+  const _termUser = DB.get('users').find(x => x.account_id === _msCurrentId);
+  if(!_termUser){ showToast('Staff not found.','error'); return; }
+  DB.remove('users', _termUser.id);
   showToast('Staff removed.','success');
   loadStaff();
 });
@@ -1552,7 +1552,7 @@ document.getElementById('ms-btn-clockout').addEventListener('click', async () =>
   const records = DB.get('attendance',[]);
   const today = todayStr();
   const rec = records.find(r => r.account_id === _msCurrentId && r.date === today && !r.clock_out);
-  if(rec){ rec.clock_out = nowTime(); DB.set('attendance', records); showToast('Clocked out.','success'); }
+  if(rec){ DB.update('attendance', rec.id, { clock_out: nowTime() }); showToast('Clocked out.','success'); }
   else showToast('No open clock-in found for today.','info');
 });
 
