@@ -919,16 +919,12 @@
 <div id="cat-popover-backdrop" style="display:none;position:fixed;inset:0;z-index:999"></div>
 <style>@keyframes overlayTimeout{0%,85%{opacity:1;pointer-events:all}100%{opacity:0;pointer-events:none;visibility:hidden}}#db-loading-overlay{animation:overlayTimeout 4s forwards}</style>
 <div id="db-loading-overlay" style="position:fixed;inset:0;background:#f5f0e8;display:flex;align-items:center;justify-content:center;z-index:9999;font-family:DM Sans,sans-serif;flex-direction:column;gap:12px"><div style="font-size:2rem">☕</div><div style="font-size:0.9rem;color:#4a6228;letter-spacing:0.08em;font-weight:600">LOADING SYNC POS…</div></div>
+<!-- Firebase v9 compat SDKs (must load before firebase-db.js) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- Firebase DB layer (replaces localStorage DB) -->
+<script src="firebase-db.js"></script>
 <script src="app.js"></script>
-<script>
-setTimeout(function(){
-  var o=document.getElementById("db-loading-overlay");
-  if(o){o.style.display="none";o.remove();}
-  var pos=document.getElementById("screen-pos");
-  if(pos&&pos.classList.contains("active"))return;
-  var login=document.getElementById("screen-login");
-  if(login){login.classList.add("active");}
-},3000);
-</script>
+<!-- Loading overlay is dismissed by initApp() in app.js after Firestore preload -->
 </body>
 </html>

@@ -1,33 +1,5 @@
 "use strict";
-// ═══════════════════════════════════════════════════
-//  DB  —  localStorage backend  (no server required)
-// ═══════════════════════════════════════════════════
-(function () {
-  const PREFIX = "syncpos:";
-  const ARRAY_TABLES = new Set([
-    "users","products","addons","inventory","premade_stock",
-    "orders","waste","expenses","attendance","system_log",
-  ]);
-  function lsGet(key) {
-    try { const r=localStorage.getItem(PREFIX+key); return r===null?null:JSON.parse(r); } catch { return null; }
-  }
-  function lsSet(key,value) {
-    try { localStorage.setItem(PREFIX+key,JSON.stringify(value)); } catch(e) { console.error("syncpos localStorage write failed:",e); }
-  }
-  window.DB = {
-    get(key,def) { const v=lsGet(key); if(v!==null)return v; return def!==undefined?def:ARRAY_TABLES.has(key)?[]:null; },
-    set(key,val) { if(ARRAY_TABLES.has(key)&&!Array.isArray(val)){console.error(`DB.set('${key}') expects an array`);return;} lsSet(key,val); },
-    push(table,row) { if(!ARRAY_TABLES.has(table)){console.error(`DB.push: '${table}' is not an array table`);return row;} const rows=this.get(table); const saved={id:row.id||this.uid(),...row}; rows.push(saved); lsSet(table,rows); return saved; },
-    update(table,id,patch) { const rows=this.get(table); const idx=rows.findIndex(r=>r.id===id); if(idx===-1){console.warn(`DB.update: id '${id}' not found in '${table}'`);return null;} rows[idx]={...rows[idx],...patch}; lsSet(table,rows); return rows[idx]; },
-    remove(table,id) { lsSet(table,this.get(table).filter(r=>r.id!==id)); },
-    uid() { return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g,c=>{const r=(Math.random()*16)|0;return(c==="x"?r:(r&0x3)|0x8).toString(16);}); },
-    invalidate(){},
-    async preload(){},
-    exportAll() { const out={}; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(PREFIX)){const s=k.slice(PREFIX.length);out[s]=lsGet(s);}} return out; },
-    importAll(data,{merge=false}={}) { Object.entries(data).forEach(([k,v])=>{if(merge&&lsGet(k)!==null)return;lsSet(k,v);}); },
-    clearAll() { const keys=[]; for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(PREFIX))keys.push(k);} keys.forEach(k=>localStorage.removeItem(k)); },
-  };
-})();
+// DB is provided by firebase-db.js (loaded before this script in index.html)
 // ═══════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════
@@ -268,7 +240,8 @@ document.getElementById('login-form')?.addEventListener('submit',e=>{
   }
 
   S.user=user;
-  localStorage.setItem('syncpos_session', JSON.stringify(user));
+  // Persist session locally so page refresh restores login
+  try { localStorage.setItem('syncpos_session', JSON.stringify({account_id:user.account_id,pin:user.pin})); } catch(_){}
   window._loginStep1User=null;
   // Record every login as a new attendance entry
   const _today=todayStr();
@@ -2652,24 +2625,44 @@ function openInvoicePreview(sale){
   openModal('modal-invoice-preview');
 }
 
-// ─── Session restore (runs after all functions are defined) ──────────────
-(function restoreSession() {
+// ─── DB preload + Session restore ────────────────────────────
+(async function initApp() {
   try {
-    const raw = localStorage.getItem("syncpos_session");
-    if (!raw) return;
-    const user  = JSON.parse(raw);
-    const found = DB.get("users").find(
-      u => u.account_id === user.account_id && u.pin === user.pin
-    );
-    if (found) {
-      window.S.user = found;
-      initPOS();
-      showScreen("screen-pos");
-    } else {
+    // Show loading overlay while Firestore data is fetched
+    const overlay = document.getElementById('db-loading-overlay');
+    if (overlay) overlay.style.display = 'flex';
+
+    await DB.preload();
+
+    // Try to restore session from localStorage token
+    let restored = false;
+    try {
+      const raw = localStorage.getItem("syncpos_session");
+      if (raw) {
+        const token = JSON.parse(raw);
+        const found = DB.get("users").find(
+          u => u.account_id === token.account_id && u.pin === token.pin
+        );
+        if (found) {
+          window.S.user = found;
+          initPOS();
+          showScreen("screen-pos");
+          restored = true;
+        } else {
+          localStorage.removeItem("syncpos_session");
+        }
+      }
+    } catch (err) {
+      console.warn("Session restore failed:", err);
       localStorage.removeItem("syncpos_session");
     }
+
+    if (!restored) showScreen("screen-login");
   } catch (err) {
-    console.warn("Session restore failed:", err);
-    localStorage.removeItem("syncpos_session");
+    console.error("DB preload failed:", err);
+    showScreen("screen-login");
+  } finally {
+    const overlay = document.getElementById('db-loading-overlay');
+    if (overlay) { overlay.style.display = 'none'; overlay.remove(); }
   }
 })();
