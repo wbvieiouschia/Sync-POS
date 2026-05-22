@@ -44,55 +44,22 @@
         <h2 class="login-form-title">SYNC Login</h2>
         <p class="login-form-desc">Please enter your credentials to access the POS.</p>
 
-        <!-- Step Indicator -->
-        <div class="login-steps-indicator">
-          <div class="login-step-item" id="step-ind-1">
-            <div class="step-circle active" id="step-circle-1">1</div>
-            <span class="step-label-text">Password</span>
-          </div>
-          <div class="step-connector" id="step-connector"></div>
-          <div class="login-step-item" id="step-ind-2">
-            <div class="step-circle" id="step-circle-2">2</div>
-            <span class="step-label-text">Account Access</span>
-          </div>
-        </div>
-
         <form id="login-form" class="login-form" novalidate>
-
-          <!-- ── STEP 1: Password ── -->
-          <div id="login-step-1">
-            <div class="field-group">
-              <label class="field-label" for="password">Password</label>
-              <div class="field-wrap"><span class="field-icon">🔑</span><input id="password" class="field-input" type="password" placeholder="Enter your password"/></div>
-            </div>
-            <p id="login-error-1" class="login-error" hidden></p>
-            <button type="button" id="btn-login-next" class="btn-login-submit">Next &nbsp;→</button>
+          <div class="login-role-toggle" style="margin-bottom:16px">
+            <button type="button" class="role-tab active" data-role="admin">ADMIN</button>
+            <button type="button" class="role-tab" data-role="staff">STAFF</button>
           </div>
-
-          <!-- ── STEP 2: Account ID + PIN ── -->
-          <div id="login-step-2" hidden>
-            <div class="login-step2-greeting" id="login-step2-greeting">
-              <span class="step2-greeting-icon">👋</span>
-              <span id="step2-greeting-name">Welcome back!</span>
-            </div>
-            <div class="login-role-toggle" style="margin-bottom:16px">
-              <button type="button" class="role-tab active" data-role="admin">ADMIN</button>
-              <button type="button" class="role-tab" data-role="staff">STAFF</button>
-            </div>
-            <div class="field-group">
-              <label class="field-label" for="account-id">Account ID</label>
-              <div class="field-wrap"><span class="field-icon">👤</span><input id="account-id" class="field-input" type="text" placeholder="MGR-0001" autocomplete="off"/></div>
-            </div>
-            <div class="field-group">
-              <label class="field-label" for="pin">Access PIN</label>
-              <div class="field-wrap"><span class="field-icon">🔒</span><input id="pin" class="field-input" type="password" placeholder="••••••" maxlength="6" inputmode="numeric"/></div>
-            </div>
-            <p id="login-error" class="login-error" hidden>⚠️ Invalid Account ID or PIN. Please try again.</p>
-            <a href="#" class="login-forgot" onclick="showForgotHint(event)">Forgot PIN?</a>
-            <button type="submit" class="btn-login-submit">Clock in &nbsp;→</button>
-            <button type="button" id="btn-login-back" class="btn-login-back">← Back</button>
+          <div class="field-group">
+            <label class="field-label" for="account-id">Account ID</label>
+            <div class="field-wrap"><span class="field-icon">👤</span><input id="account-id" class="field-input" type="text" placeholder="MGR-0001" autocomplete="off"/></div>
           </div>
-
+          <div class="field-group">
+            <label class="field-label" for="pin">Access PIN</label>
+            <div class="field-wrap"><span class="field-icon">🔒</span><input id="pin" class="field-input" type="password" placeholder="••••••" maxlength="6" inputmode="numeric"/></div>
+          </div>
+          <p id="login-error" class="login-error" hidden>⚠️ Invalid Account ID or PIN. Please try again.</p>
+          <a href="#" class="login-forgot" onclick="showForgotHint(event)">Forgot PIN?</a>
+          <button type="submit" class="btn-login-submit">Clock in &nbsp;→</button>
           <p class="login-authorized">Authorized Personnel Only</p>
         </form>
       </div>

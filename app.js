@@ -104,9 +104,8 @@ const TEMP_ACCOUNTS = [
 ];
 
 // Holds the user matched in Step 1 until Step 2 confirms
-window._loginStep1User = null;
 
-// Role toggle (Step 2 only)
+// ─── Role toggle ──────────────────────────────────
 document.querySelector('.login-role-toggle')?.addEventListener('click',e=>{
   const t=e.target.closest('.role-tab'); if(!t) return;
   document.querySelectorAll('.role-tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
@@ -125,80 +124,11 @@ function showForgotHint(e){
   }
 }
 
-// ─── Step indicator helpers ───────────────────────
-function setLoginStep(step){
-  const s1=document.getElementById('login-step-1');
-  const s2=document.getElementById('login-step-2');
-  const c1=document.getElementById('step-circle-1');
-  const c2=document.getElementById('step-circle-2');
-  const conn=document.getElementById('step-connector');
-  if(step===1){
-    s1.hidden=false; s2.hidden=true;
-    c1.className='step-circle active'; c1.textContent='1';
-    c2.className='step-circle'; c2.textContent='2';
-    conn.classList.remove('active');
-    document.getElementById('login-error-1').hidden=true;
-  } else {
-    s1.hidden=true; s2.hidden=false;
-    c1.className='step-circle done'; c1.textContent='✓';
-    c2.className='step-circle active'; c2.textContent='2';
-    conn.classList.add('active');
-    document.getElementById('login-error').hidden=true;
-    document.getElementById('account-id').value='';
-    document.getElementById('pin').value='';
-    // Pre-fill account ID if we know the user
-    if(window._loginStep1User && window._loginStep1User.account_id){
-      document.getElementById('account-id').value=window._loginStep1User.account_id;
-    }
-    setTimeout(()=>{ const el=document.getElementById('account-id'); if(!el.value) el.focus(); else document.getElementById('pin').focus(); },50);
-  }
-}
-
-// ─── STEP 1: password only ────────────────────────
-document.getElementById('btn-login-next')?.addEventListener('click',()=>{
-  const password=(document.getElementById('password').value||'').trim();
-  const errEl=document.getElementById('login-error-1');
-  errEl.hidden=true;
-
-  if(!password){
-    errEl.textContent='⚠️ Please enter your password.';
-    errEl.hidden=false; return;
-  }
-
-  // Check temp accounts first
-  let found=TEMP_ACCOUNTS.find(u=>u.password===password);
-
-  // Then check DB users (password field or pin as fallback)
-  if(!found && typeof DB!=='undefined'){
-    const dbUsers=DB.get('users');
-    found=dbUsers.find(u=>{
-      return (u.password && u.password===password) || (!u.password && u.pin===password);
-    });
-  }
-
-  if(!found){
-    errEl.textContent='⚠️ Incorrect password. Please try again.';
-    errEl.hidden=false; return;
-  }
-
-  window._loginStep1User=found;
-  const greet=document.getElementById('step2-greeting-name');
-  greet.textContent=`Welcome back, ${found.name}!`;
-  setLoginStep(2);
-});
-
-// ─── Back button ──────────────────────────────────
-document.getElementById('btn-login-back')?.addEventListener('click',()=>{
-  window._loginStep1User=null;
-  setLoginStep(1);
-});
-
 // ═══════════════════════════════════════════════════
-//  LOGIN – STEP 2: Account ID + PIN
+//  LOGIN: Account ID + PIN (single step)
 // ═══════════════════════════════════════════════════
 document.getElementById('login-form')?.addEventListener('submit',e=>{
   e.preventDefault();
-  if(document.getElementById('login-step-2').hidden) return; // guard: only run on step 2
 
   const id=document.getElementById('account-id').value.trim();
   const pin=document.getElementById('pin').value.trim();
@@ -210,26 +140,15 @@ document.getElementById('login-form')?.addEventListener('submit',e=>{
     errEl.hidden=false; return;
   }
 
-  const step1User=window._loginStep1User;
-
-  // Verify account_id + pin matches the user authenticated in Step 1
   let user=null;
-  if(step1User){
-    const idOk=step1User.account_id===id;
-    const pinOk=step1User.pin===pin;
-    if(idOk && pinOk) user=step1User;
-  }
 
-  // Fallback: also search DB (in case step1User is a shell/preview object)
+  // Check temp accounts
+  user=TEMP_ACCOUNTS.find(u=>u.account_id===id && u.pin===pin)||null;
+
+  // Check DB users
   if(!user && typeof DB!=='undefined'){
     const dbUsers=DB.get('users');
-    const dbMatch=dbUsers.find(u=>u.account_id===id && u.pin===pin);
-    // Must also match the email from step 1
-    if(dbMatch && step1User && dbMatch.email && dbMatch.email.toLowerCase()===(step1User.email||'').toLowerCase()){
-      user=dbMatch;
-    } else if(dbMatch && !step1User){
-      user=dbMatch;
-    }
+    user=dbUsers.find(u=>u.account_id===id && u.pin===pin)||null;
   }
 
   if(!user){
@@ -238,10 +157,7 @@ document.getElementById('login-form')?.addEventListener('submit',e=>{
   }
 
   S.user=user;
-  // Persist session locally so page refresh restores login
   try { localStorage.setItem('syncpos_session', JSON.stringify({account_id:user.account_id,pin:user.pin})); } catch(_){}
-  window._loginStep1User=null;
-  // Record every login as a new attendance entry
   const _today=todayStr();
   try {
     DB.push('attendance',{id:DB.uid(),account_id:S.user.account_id,name:S.user.name,date:_today,clock_in:nowTime(),clock_out:null});
