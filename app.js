@@ -154,32 +154,30 @@ function setLoginStep(step){
   }
 }
 
-// ─── STEP 1: email + password ─────────────────────
+// ─── STEP 1: password only ────────────────────────
 document.getElementById('btn-login-next')?.addEventListener('click',()=>{
-  const email=(document.getElementById('email').value||'').trim().toLowerCase();
   const password=(document.getElementById('password').value||'').trim();
   const errEl=document.getElementById('login-error-1');
   errEl.hidden=true;
 
-  if(!email || !password){
-    errEl.textContent='⚠️ Please enter your email and password.';
+  if(!password){
+    errEl.textContent='⚠️ Please enter your password.';
     errEl.hidden=false; return;
   }
 
   // Check temp accounts first
-  let found=TEMP_ACCOUNTS.find(u=>u.email.toLowerCase()===email && u.password===password);
+  let found=TEMP_ACCOUNTS.find(u=>u.password===password);
 
-  // Then check DB users (password = pin for existing accounts, or password field if present)
+  // Then check DB users (password field or pin as fallback)
   if(!found && typeof DB!=='undefined'){
     const dbUsers=DB.get('users');
     found=dbUsers.find(u=>{
-      if(!u.email || u.email.toLowerCase()!==email) return false;
       return (u.password && u.password===password) || (!u.password && u.pin===password);
     });
   }
 
   if(!found){
-    errEl.textContent='⚠️ Incorrect email or password. Please try again.';
+    errEl.textContent='⚠️ Incorrect password. Please try again.';
     errEl.hidden=false; return;
   }
 
