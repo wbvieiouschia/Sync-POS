@@ -1075,3 +1075,9 @@ dialog[open].cat-edit-popover{display:flex;animation:modalIn .2s cubic-bezier(.3
 .product-price-up{font-size:.7rem;font-weight:600;color:var(--accent);opacity:.7;white-space:nowrap;}
 /* View-only badge in Edit Items for non-manager staff */
 .edit-item-viewonly-badge{font-size:.72rem;font-weight:600;color:var(--text-muted);background:var(--surface-muted,#f0f0f0);border:1px solid var(--border-soft);border-radius:20px;padding:3px 10px;white-space:nowrap;pointer-events:none;}
+
+/* ── @media print: hide the entire app if Ctrl+P is used accidentally ── */
+@media print {
+  body > *                       { display: none !important; }
+  /* printReceipt() opens its own window, so this is just a safety net */
+}

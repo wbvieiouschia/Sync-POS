@@ -2862,6 +2862,159 @@ function openInvoicePreview(sale){
   openModal('modal-invoice-preview');
 }
 
+// ═══════════════════════════════════════════════════
+//  RECEIPT PRINTER  (thermal / receipt printer safe)
+// ═══════════════════════════════════════════════════
+function printReceipt(sourceId) {
+  const el = document.getElementById(sourceId);
+  if (!el) { window.print(); return; }
+
+  // Grab the inner HTML of just the receipt content
+  const html = el.innerHTML;
+
+  // Open a minimal blank window — no chrome, no UI
+  const win = window.open('', '_blank', 'width=380,height=600,menubar=no,toolbar=no,location=no,status=no,scrollbars=yes');
+  if (!win) { window.print(); return; } // popup blocked fallback
+
+  win.document.write(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>Receipt</title>
+<style>
+  /* ── Reset ── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ── Thermal paper: 80mm wide is the most common receipt printer width.
+        Change to 58mm if you use a narrower printer. ── */
+  @page {
+    size: 80mm auto;   /* width fixed, height auto-expands */
+    margin: 4mm 3mm;
+  }
+
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 11px;
+    color: #000;
+    background: #fff;
+    width: 74mm;       /* 80mm page − 6mm margins */
+    margin: 0 auto;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* ── Receipt wrapper ── */
+  .rcp-wrap { width: 100%; }
+
+  /* ── Header / brand ── */
+  .rcp-header   { text-align: center; margin-bottom: 4px; }
+  .rcp-steam    { display: flex; justify-content: center; margin-bottom: 2px; }
+  .rcp-steam svg { width: 48px; height: 16px; }
+  .rcp-cup      { display: flex; justify-content: center; margin-bottom: 2px; }
+  .rcp-cup svg  { width: 52px; height: 38px; }
+
+  .rcp-brand-name {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 20px; font-weight: 700; font-style: italic;
+    letter-spacing: .02em;
+  }
+  .rcp-brand-name span { font-size: 12px; vertical-align: super; }
+  .rcp-est-line  { font-size: 9px; letter-spacing: .08em; margin: 1px 0; }
+  .rcp-tagline   { font-size: 8.5px; margin: 2px 0 4px; font-style: italic; }
+  .rcp-address   { font-size: 9px; line-height: 1.4; }
+  .rcp-cashier   { font-size: 9.5px; text-align: left; margin: 3px 0; }
+
+  /* ── Dashed divider ── */
+  .rcp-divider-dash {
+    border: none;
+    border-top: 1px dashed #000;
+    margin: 4px 0;
+  }
+
+  /* ── Queue / invoice ── */
+  .rcp-queue-code   { font-size: 18px; font-weight: 700; text-align: center; letter-spacing: .04em; margin: 3px 0 1px; }
+  .rcp-invoice-title{ font-size: 11px; font-weight: 700; text-align: center; letter-spacing: .06em; margin: 1px 0 3px; }
+
+  /* ── Meta bar (date / time / queue / SI) ── */
+  .rcp-meta-bar {
+    display: flex; justify-content: space-between;
+    font-size: 8.5px; margin: 2px 0;
+  }
+  .rcp-si { font-size: 8.5px; }
+
+  /* ── Order type banner ── */
+  .rcp-type-bar {
+    text-align: center; font-size: 12px; font-weight: 700;
+    letter-spacing: .1em; margin: 3px 0;
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+  }
+  .rcp-type-dashes { font-size: 10px; }
+
+  /* ── Items ── */
+  .rcp-items { margin: 4px 0; }
+  .rcp-item-row {
+    display: flex; align-items: baseline;
+    font-size: 10.5px; font-weight: 700;
+    margin-bottom: 2px;
+  }
+  .rcp-item-qty   { min-width: 16px; margin-right: 4px; }
+  .rcp-item-name  { flex: 1; }
+  .rcp-item-price { white-space: nowrap; margin-left: 4px; }
+  .rcp-addon-row  { display: flex; font-size: 9px; font-weight: 400; margin-bottom: 1px; }
+  .rcp-addon-indent{ min-width: 22px; }
+  .rcp-addon-name { flex: 1; }
+
+  /* ── Summary ── */
+  .rcp-summary-top, .rcp-breakdown div,
+  .rcp-summary div, .rcp-summary-row {
+    display: flex; justify-content: space-between;
+    font-size: 9.5px; margin-bottom: 1px;
+  }
+  .rcp-summary-top { font-size: 9.5px; margin: 2px 0; }
+  .rcp-breakdown   { margin: 2px 0; }
+
+  /* Total due row */
+  .rcp-due-row, .rcp-total-row {
+    display: flex; justify-content: space-between;
+    font-size: 12px; font-weight: 700;
+    margin: 4px 0 2px;
+    border-top: 1px solid #000;
+    padding-top: 3px;
+  }
+  .rcp-change-row, .rcp-change-amt {
+    font-weight: 700;
+  }
+  .rcp-br-row {
+    display: flex; justify-content: space-between;
+    font-size: 9.5px; margin-bottom: 1px;
+  }
+
+  /* ── Footer ── */
+  .rcp-footer, .rcp-issued {
+    text-align: center; font-size: 8.5px;
+    margin-top: 6px; font-style: italic;
+  }
+
+  /* ── Hide everything that isn't the receipt ── */
+  button, .modal-footer, [data-close] { display: none !important; }
+</style>
+</head>
+<body>${html}</body>
+</html>`);
+
+  win.document.close();
+
+  // Small delay lets images/SVGs render before printing
+  win.onload = function () {
+    win.focus();
+    win.print();
+    // Close the print window after the dialog is dismissed
+    win.onafterprint = function () { win.close(); };
+    // Fallback close for browsers that don't fire onafterprint
+    setTimeout(function () { try { win.close(); } catch(_){} }, 3000);
+  };
+}
+
 // ─── DB preload + Session restore ────────────────────────────
 (async function initApp() {
   try {
