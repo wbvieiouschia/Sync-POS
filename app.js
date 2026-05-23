@@ -84,6 +84,25 @@ function mergeStocks(stocks){
 }
 
 
+// ── Expiry notification badge on Stocks nav item ────────────
+function updateStocksExpiryBadge(){
+  const badge=document.getElementById('stocks-expiry-badge');
+  if(!badge) return;
+  const today=new Date(); today.setHours(0,0,0,0);
+  const inv=DB.get('inventory');
+  const count=inv.filter(s=>{
+    if(!s.expiry_date) return false;
+    const exp=new Date(s.expiry_date); exp.setHours(0,0,0,0);
+    return Math.round((exp-today)/864e5)<=5;
+  }).length;
+  if(count>0){
+    badge.textContent=count>99?'99+':count;
+    badge.hidden=false;
+  } else {
+    badge.hidden=true;
+  }
+}
+
 // Expose S on window so db-server.js can set S.user during session restore
 window.S = S;
 
@@ -1073,16 +1092,302 @@ document.getElementById('btn-submit-waste').addEventListener('click',()=>{
 // ═══════════════════════════════════════════════════
 //  SALES
 // ═══════════════════════════════════════════════════
-function loadSales(){
-  const orders=DB.get('orders').slice().reverse();
-  const today=new Date().toLocaleDateString();
-  let todayRev=0,todayCnt=0;
-  orders.forEach(o=>{if(new Date(o.created_at).toLocaleDateString()===today){todayRev+=o.total;todayCnt++;}});
-  document.getElementById('sales-today').textContent=peso(todayRev);
-  document.getElementById('sales-count').textContent=todayCnt;
-  document.getElementById('sales-avg').textContent=todayCnt?peso(todayRev/todayCnt):peso(0);
-  document.getElementById('sales-tbody').innerHTML=orders.map(o=>`<tr><td><code>${o.order_id||'—'}</code></td><td>${peso(o.total)}</td><td>${peso(o.cash_tendered)}</td><td>${peso(Math.max(0,o.cash_tendered-o.total))}</td><td>${o.cashier_name||'—'}</td><td style="font-size:.78rem;color:var(--text-muted)">${new Date(o.created_at).toLocaleString()}</td></tr>`).join('')||'<tr><td colspan="6" class="empty-state">No sales yet.</td></tr>';
+// ── Sales period + date filter state ─────────────────────────
+let _salesPeriod = 'daily';
+let _salesDateFrom = '';   // 'YYYY-MM-DD' or ''
+let _salesDateTo   = '';   // 'YYYY-MM-DD' or ''
+
+// ── Build chart segments per period ──────────────────────────
+function _buildSalesSegments(orders, period, now){
+  if(period === 'custom'){
+    // Bucket by day across the custom range
+    const from = _salesDateFrom ? new Date(_salesDateFrom+'T00:00:00') : null;
+    const to   = _salesDateTo   ? new Date(_salesDateTo  +'T23:59:59') : null;
+    const start = from || (orders.length ? new Date(Math.min(...orders.map(o=>new Date(o.created_at)))) : new Date());
+    const end   = to   || new Date();
+    start.setHours(0,0,0,0);
+    const dayCount = Math.max(1, Math.round((end-start)/864e5)+1);
+    return Array.from({length:dayCount}, (_,i) => {
+      const d = new Date(start); d.setDate(start.getDate()+i);
+      const ds = d.toLocaleDateString();
+      const rev = orders.filter(o=>new Date(o.created_at).toLocaleDateString()===ds).reduce((s,o)=>s+(o.total||0),0);
+      const cnt = orders.filter(o=>new Date(o.created_at).toLocaleDateString()===ds).length;
+      const label = `${d.getMonth()+1}/${d.getDate()}`;
+      return {label, rev, cnt};
+    });
+  }
+  if(period === 'daily'){
+    const buckets = Array.from({length:24}, (_,i) => ({label: i===0?'12am':i<12?`${i}am`:i===12?'12pm':`${i-12}pm`, rev:0, cnt:0}));
+    orders.forEach(o => { const h = new Date(o.created_at).getHours(); buckets[h].rev += o.total||0; buckets[h].cnt++; });
+    return buckets;
+  }
+  if(period === 'weekly'){
+    const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const start = new Date(now); start.setDate(now.getDate()-now.getDay()); start.setHours(0,0,0,0);
+    return days.map((label,i) => {
+      const day = new Date(start); day.setDate(start.getDate()+i);
+      const dayStr = day.toLocaleDateString();
+      const rev = orders.filter(o => new Date(o.created_at).toLocaleDateString()===dayStr).reduce((s,o)=>s+(o.total||0),0);
+      const cnt = orders.filter(o => new Date(o.created_at).toLocaleDateString()===dayStr).length;
+      return {label, rev, cnt};
+    });
+  }
+  if(period === 'monthly'){
+    const daysInMonth = new Date(now.getFullYear(), now.getMonth()+1, 0).getDate();
+    return Array.from({length:daysInMonth}, (_,i) => {
+      const day = i+1;
+      const rev = orders.filter(o => { const d=new Date(o.created_at); return d.getDate()===day&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }).reduce((s,o)=>s+(o.total||0),0);
+      const cnt = orders.filter(o => { const d=new Date(o.created_at); return d.getDate()===day&&d.getMonth()===now.getMonth()&&d.getFullYear()===now.getFullYear(); }).length;
+      return {label:`${day}`, rev, cnt};
+    });
+  }
+  // yearly — 12 months
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return months.map((label,i) => {
+    const rev = orders.filter(o => { const d=new Date(o.created_at); return d.getMonth()===i&&d.getFullYear()===now.getFullYear(); }).reduce((s,o)=>s+(o.total||0),0);
+    const cnt = orders.filter(o => { const d=new Date(o.created_at); return d.getMonth()===i&&d.getFullYear()===now.getFullYear(); }).length;
+    return {label, rev, cnt};
+  });
 }
+
+// ── Draw the bar chart on canvas ──────────────────────────────
+function _renderSalesChart(segments, period){
+  const canvas = document.getElementById('sales-chart');
+  if(!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || canvas.parentElement.offsetWidth || 600;
+  const H = 200;
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Colors from CSS vars (read computed style)
+  const cs = getComputedStyle(document.documentElement);
+  const accentColor  = cs.getPropertyValue('--accent').trim()  || '#4a6228';
+  const accentLt     = cs.getPropertyValue('--accent-lt').trim()|| '#5e7c34';
+  const mutedColor   = cs.getPropertyValue('--text-muted').trim()|| '#748a52';
+  const borderColor  = cs.getPropertyValue('--border').trim()  || '#c4ccaa';
+
+  const padL=40, padR=12, padT=16, padB=36;
+  const chartW = W - padL - padR;
+  const chartH = H - padT - padB;
+
+  // Max revenue for y-axis scale
+  const maxRev = Math.max(...segments.map(s=>s.rev), 1);
+  // Nice ceiling
+  const mag = Math.pow(10, Math.floor(Math.log10(maxRev)));
+  const niceMax = Math.ceil(maxRev/mag)*mag;
+  const yTicks = 4;
+
+  ctx.clearRect(0,0,W,H);
+
+  // ── Grid lines & Y labels ──
+  ctx.font = `500 10px sans-serif`;
+  ctx.textAlign = 'right';
+  for(let i=0;i<=yTicks;i++){
+    const val = (niceMax/yTicks)*i;
+    const y = padT + chartH - (val/niceMax)*chartH;
+    ctx.strokeStyle = borderColor;
+    ctx.globalAlpha = 0.5;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(padL,y); ctx.lineTo(padL+chartW,y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = mutedColor;
+    // Format label: show k for thousands
+    const lbl = val >= 1000 ? `₱${(val/1000).toFixed(val%1000===0?0:1)}k` : val===0?'':'₱'+val;
+    ctx.fillText(lbl, padL-4, y+3.5);
+  }
+
+  // ── Bars ──
+  const n = segments.length;
+  // For monthly with many bars, skip some x labels
+  const skipLabel = period==='monthly' ? 4 : (period==='daily' ? 3 : 1);
+  const barGap = period==='daily'?2:period==='monthly'?1:4;
+  const barW = Math.max(4, (chartW / n) - barGap);
+
+  segments.forEach((seg, i) => {
+    const x = padL + i*(barW+barGap) + barGap/2;
+    const barH = seg.rev > 0 ? Math.max(3, (seg.rev/niceMax)*chartH) : 0;
+    const y = padT + chartH - barH;
+
+    // Bar gradient
+    if(barH > 0){
+      const grad = ctx.createLinearGradient(0, y, 0, padT+chartH);
+      grad.addColorStop(0, accentLt);
+      grad.addColorStop(1, accentColor);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      const r = Math.min(4, barW/2);
+      ctx.roundRect ? ctx.roundRect(x, y, barW, barH, [r,r,0,0]) : ctx.rect(x, y, barW, barH);
+      ctx.fill();
+    } else {
+      // Empty bar placeholder
+      ctx.fillStyle = borderColor;
+      ctx.globalAlpha = 0.3;
+      ctx.fillRect(x, padT+chartH-2, barW, 2);
+      ctx.globalAlpha = 1;
+    }
+
+    // X label
+    if(i % skipLabel === 0){
+      ctx.fillStyle = mutedColor;
+      ctx.font = `500 9px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(seg.label, x + barW/2, padT+chartH+14);
+    }
+  });
+
+  // ── Highlight today/current bar ──
+  if(period==='daily'){
+    const nowH = new Date().getHours();
+    const x = padL + nowH*(barW+barGap)+barGap/2;
+    ctx.strokeStyle = accentLt;
+    ctx.lineWidth = 1.5;
+    ctx.globalAlpha = 0.5;
+    ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(x+barW/2, padT); ctx.lineTo(x+barW/2, padT+chartH); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha=1;
+  }
+
+  // Chart title & subtitle
+  const chartTitles = {daily:'Revenue by Hour', weekly:'Revenue by Day', monthly:'Revenue by Date', yearly:'Revenue by Month', custom:'Revenue by Day'};
+  document.getElementById('sales-chart-title').textContent = chartTitles[period] || 'Revenue';
+  const totalOrders = segments.reduce((s,seg)=>s+seg.cnt,0);
+  document.getElementById('sales-chart-sub').textContent = totalOrders ? `${totalOrders} orders` : '';
+}
+
+function loadSales(){
+  const now = new Date();
+  const orders = DB.get('orders').slice().reverse();
+  const hasDateFilter = _salesDateFrom || _salesDateTo;
+
+  // ── Filter orders ──
+  let filtered;
+  if(hasDateFilter){
+    const from = _salesDateFrom ? new Date(_salesDateFrom+'T00:00:00') : null;
+    const to   = _salesDateTo   ? new Date(_salesDateTo  +'T23:59:59') : null;
+    filtered = orders.filter(o => {
+      const d = new Date(o.created_at);
+      if(from && d < from) return false;
+      if(to   && d > to  ) return false;
+      return true;
+    });
+  } else {
+    filtered = orders.filter(o => {
+      const d = new Date(o.created_at);
+      if(_salesPeriod === 'daily'){
+        return d.toLocaleDateString() === now.toLocaleDateString();
+      } else if(_salesPeriod === 'weekly'){
+        const startOfWeek = new Date(now);
+        startOfWeek.setDate(now.getDate() - now.getDay());
+        startOfWeek.setHours(0,0,0,0);
+        const endOfWeek = new Date(startOfWeek);
+        endOfWeek.setDate(startOfWeek.getDate() + 6);
+        endOfWeek.setHours(23,59,59,999);
+        return d >= startOfWeek && d <= endOfWeek;
+      } else if(_salesPeriod === 'monthly'){
+        return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      } else {
+        return d.getFullYear() === now.getFullYear();
+      }
+    });
+  }
+
+  const rev = filtered.reduce((s,o) => s + (o.total||0), 0);
+  const cnt = filtered.length;
+
+  // ── Summary card labels ──
+  let revLabel, cntLabel;
+  if(hasDateFilter){
+    const parts = [];
+    if(_salesDateFrom) parts.push(_salesDateFrom);
+    if(_salesDateTo)   parts.push(_salesDateTo);
+    const rangeStr = parts.length===2 ? `${_salesDateFrom} – ${_salesDateTo}` : parts[0];
+    revLabel = `Revenue (${rangeStr})`;
+    cntLabel = `Orders (${rangeStr})`;
+  } else {
+    const labels = {
+      daily:   ['Today\'s Revenue','Today\'s Orders'],
+      weekly:  ['This Week\'s Revenue','This Week\'s Orders'],
+      monthly: ['This Month\'s Revenue','This Month\'s Orders'],
+      yearly:  ['This Year\'s Revenue','This Year\'s Orders'],
+    };
+    revLabel = labels[_salesPeriod][0];
+    cntLabel = labels[_salesPeriod][1];
+  }
+
+  document.getElementById('sales-rev-label').textContent = revLabel;
+  document.getElementById('sales-cnt-label').textContent = cntLabel;
+  document.getElementById('sales-today').textContent = peso(rev);
+  document.getElementById('sales-count').textContent = cnt;
+  document.getElementById('sales-avg').textContent = cnt ? peso(rev/cnt) : peso(0);
+  document.getElementById('sales-tbody').innerHTML = filtered.map(o =>
+    `<tr><td><code>${o.order_id||'—'}</code></td><td>${peso(o.total)}</td><td>${peso(o.cash_tendered)}</td><td>${peso(Math.max(0,o.cash_tendered-o.total))}</td><td>${o.cashier_name||'—'}</td><td style="font-size:.78rem;color:var(--text-muted)">${new Date(o.created_at).toLocaleString()}</td></tr>`
+  ).join('') || '<tr><td colspan="6" class="empty-state">No sales for this period.</td></tr>';
+
+  // ── Chart ──
+  const chartPeriod = hasDateFilter ? 'custom' : _salesPeriod;
+  const segments = _buildSalesSegments(filtered, chartPeriod, now);
+  requestAnimationFrame(() => _renderSalesChart(segments, chartPeriod));
+}
+
+// ── Sales period dropdown wiring ──────────────────────────────
+(function initSalesPeriodDropdown(){
+  const btn   = document.getElementById('sales-period-btn');
+  const dd    = document.getElementById('sales-period-dd');
+  const label = document.getElementById('sales-period-label');
+  if(!btn||!dd) return;
+  btn.addEventListener('click', e => { e.stopPropagation(); dd.hidden = !dd.hidden; });
+  dd.querySelectorAll('.isp-dd-item').forEach(item => {
+    item.addEventListener('click', () => {
+      _salesPeriod = item.dataset.period;
+      label.textContent = item.textContent;
+      dd.querySelectorAll('.isp-dd-item').forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      dd.hidden = true;
+      loadSales();
+    });
+  });
+  document.addEventListener('click', () => { dd.hidden = true; });
+
+  // ── Date filter wiring ────────────────────────────────────
+  const inputFrom = document.getElementById('sales-date-from');
+  const inputTo   = document.getElementById('sales-date-to');
+  const clearBtn  = document.getElementById('sales-date-clear');
+  const todayBtn  = document.getElementById('sales-date-today');
+
+  function onDateChange(){
+    _salesDateFrom = inputFrom?.value || '';
+    _salesDateTo   = inputTo?.value   || '';
+    // Dim the period dropdown when date filter is active
+    const active = _salesDateFrom || _salesDateTo;
+    if(btn) btn.style.opacity = active ? '0.45' : '';
+    loadSales();
+  }
+
+  inputFrom?.addEventListener('change', onDateChange);
+  inputTo?.addEventListener('change',   onDateChange);
+
+  todayBtn?.addEventListener('click', () => {
+    const today = new Date().toISOString().slice(0,10);
+    if(inputFrom) inputFrom.value = today;
+    if(inputTo)   inputTo.value   = today;
+    onDateChange();
+  });
+
+  clearBtn?.addEventListener('click', () => {
+    _salesDateFrom = ''; _salesDateTo = '';
+    if(inputFrom) inputFrom.value = '';
+    if(inputTo)   inputTo.value   = '';
+    if(btn) btn.style.opacity = '';
+    loadSales();
+  });
+})();
 
 // ═══════════════════════════════════════════════════
 //  EXPENSES
@@ -3023,6 +3328,10 @@ function printReceipt(sourceId) {
     if (overlay) overlay.style.display = 'flex';
 
     await DB.preload();
+
+    // Update expiry badge immediately and keep it live
+    updateStocksExpiryBadge();
+    DB.onChange('inventory', () => updateStocksExpiryBadge());
 
     // Try to restore session from localStorage token
     let restored = false;
