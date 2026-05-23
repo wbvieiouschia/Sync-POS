@@ -49,10 +49,12 @@ function deductRecipeFromInventory(recipe, multiplier){
   const inv=DB.get('inventory');
   recipe.forEach(r=>{
     const sid=r.stockId||r.id;
-    const idx=inv.findIndex(s=>s.id===sid);
-    if(idx!==-1) inv[idx].current_qty=Math.max(0,(parseFloat(inv[idx].current_qty)||0)-(parseFloat(r.qty)*multiplier));
+    const item=inv.find(s=>s.id===sid);
+    if(item){
+      const newQty=Math.max(0,(parseFloat(item.current_qty)||0)-(parseFloat(r.qty)*multiplier));
+      DB.update('inventory',sid,{current_qty:newQty});
+    }
   });
-  DB.set('inventory',inv);
 }
 function mergeStocks(stocks){
   const map=new Map();
@@ -295,9 +297,13 @@ function getPremadeRemainingQty(p){
   const alreadyOrdered=S.orderItems.filter(i=>i.product_id===p.id).length;
   return Math.max(0,(p.batch_qty||0)-alreadyOrdered);
 }
+let _orderPremadeSubCat='all';
 function renderProductGrid(cat=S.activeCat,search=''){
   const grid=document.getElementById('product-grid'); grid.innerHTML='';
-  const filtered=S.products.filter(p=>catMatch(p,cat)&&(!search||p.name.toLowerCase().includes(search.toLowerCase())));
+  let filtered=S.products.filter(p=>catMatch(p,cat)&&(!search||p.name.toLowerCase().includes(search.toLowerCase())));
+  if(cat==='premade' && _orderPremadeSubCat!=='all'){
+    filtered=filtered.filter(p=>(p.pm_subcategory||'')===_orderPremadeSubCat);
+  }
   if(!filtered.length){grid.innerHTML='<p class="empty-state">No products found.</p>';return;}
   filtered.forEach(p=>{
     const isPremade=(p.category||'').toLowerCase().includes('pre made');
@@ -328,6 +334,22 @@ function renderProductGrid(cat=S.activeCat,search=''){
 document.getElementById('order-cat-tabs').addEventListener('click',e=>{
   const t=e.target.closest('.cat-tab'); if(!t) return;
   document.querySelectorAll('#order-cat-tabs .cat-tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
+  const subBar=document.getElementById('order-premade-sub-tabs');
+  if(t.dataset.cat==='premade'){
+    _orderPremadeSubCat='all';
+    const subCats=[...new Set(S.products.filter(p=>catMatch(p,'premade')).map(p=>p.pm_subcategory).filter(Boolean))];
+    subBar.innerHTML=`<button class="cat-tab active" data-sub="all">All</button>`
+      +subCats.map(s=>`<button class="cat-tab" data-sub="${s}">${s}</button>`).join('');
+    subBar.style.display='';
+    subBar.querySelectorAll('.cat-tab').forEach(b=>b.addEventListener('click',()=>{
+      subBar.querySelectorAll('.cat-tab').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+      _orderPremadeSubCat=b.dataset.sub;
+      renderProductGrid(S.activeCat,document.getElementById('product-search').value.trim());
+    }));
+  } else {
+    subBar.style.display='none';
+    _orderPremadeSubCat='all';
+  }
   S.activeCat=t.dataset.cat; renderProductGrid(S.activeCat,document.getElementById('product-search').value.trim());
 });
 document.getElementById('product-search').addEventListener('input',e=>renderProductGrid(S.activeCat,e.target.value.trim()));
@@ -496,10 +518,10 @@ document.getElementById('btn-charge').addEventListener('click',async()=>{
       // Deduct 1 unit from this specific premade batch
       const pidx=prods.findIndex(p=>p.id===item.product_id);
       if(pidx!==-1){
-        prods[pidx].batch_qty=Math.max(0,(prods[pidx].batch_qty||0)-1);
-        if(prods[pidx].batch_qty<=0) prods.splice(pidx,1);
-        DB.set('products',prods);
-        S.products=prods;
+        const newBatchQty=Math.max(0,(prods[pidx].batch_qty||0)-1);
+        if(newBatchQty<=0){ DB.remove('products',prods[pidx].id); }
+        else { DB.update('products',prods[pidx].id,{batch_qty:newBatchQty}); }
+        S.products=DB.get('products');
       }
     } else {
       // Deduct recipe ingredients from inventory (1 portion per item)
@@ -637,7 +659,7 @@ function loadInventory(){
       });
     });
     const expiredIds = new Set(expired.map(s => s.id));
-    DB.set('inventory', inv.filter(s => !expiredIds.has(s.id)));
+    expiredIds.forEach(sid=>DB.remove('inventory',sid));
     const names = [...new Set(expired.map(s => s.name))].join(', ');
     showToast(`⚠️ Expired & moved to Waste: ${names}`, 'error', 6000);
   })();
@@ -660,17 +682,17 @@ document.getElementById('inventory-grid').addEventListener('click',async e=>{
   if(action==='restock'){
     if(!await confirm('Restock',`Top up "${name}" to max?`)) return;
     const inv=DB.get('inventory');
-    inv.forEach(s=>{if(allIds.includes(s.id))s.current_qty=s.max_qty;});
-    DB.set('inventory',inv); showToast('Restocked.','success'); loadInventory();
+    allIds.forEach(sid=>{const s=inv.find(x=>x.id===sid);if(s)DB.update('inventory',sid,{current_qty:s.max_qty});});
+    showToast('Restocked.','success'); loadInventory();
   } else if(action==='reduce'){
     const a=parseFloat(prompt(`Reduce "${name}" (${unit}) by how much?`));
     if(isNaN(a)||a<=0) return;
     const inv=DB.get('inventory');
-    allIds.forEach(sid=>{const s=inv.find(x=>x.id===sid);if(s)s.current_qty=Math.max(0,(parseFloat(s.current_qty)||0)-a);});
-    DB.set('inventory',inv); showToast('Reduced.','success'); loadInventory();
+    allIds.forEach(sid=>{const s=inv.find(x=>x.id===sid);if(s)DB.update('inventory',sid,{current_qty:Math.max(0,(parseFloat(s.current_qty)||0)-a)});});
+    showToast('Reduced.','success'); loadInventory();
   } else if(action==='del'){
     if(!await confirm('Remove Item',`Remove "${name}"?`)) return;
-    DB.set('inventory',DB.get('inventory').filter(s=>!allIds.includes(s.id)));
+    allIds.forEach(sid=>DB.remove('inventory',sid));
     showToast('Deleted.','success'); loadInventory();
   }
 });
@@ -788,7 +810,7 @@ function loadExpTracker(){
 document.getElementById('btn-resolve-waste').addEventListener('click',()=>{
   if(!ExpResolve.id) return;
   DB.push('waste',{id:DB.uid(),stock_id:ExpResolve.id,stock_name:ExpResolve.name,qty:ExpResolve.qty,unit:ExpResolve.unit,reason:'EXPIRED',logged_at:new Date().toISOString()});
-  DB.set('inventory',DB.get('inventory').filter(s=>s.id!==ExpResolve.id));
+  DB.remove('inventory',ExpResolve.id);
   closeModal('modal-resolve-expired'); showToast(`"${ExpResolve.name}" logged as expired waste.`,'success'); loadStocksPage();
 });
 
@@ -817,8 +839,7 @@ document.getElementById('btn-submit-waste').addEventListener('click',()=>{
   // Reduce inventory
   const inv=DB.get('inventory');
   const s=inv.find(x=>x.id===opt.value);
-  if(s) s.current_qty=Math.max(0,(parseFloat(s.current_qty)||0)-qty);
-  DB.set('inventory',inv);
+  if(s) DB.update('inventory',opt.value,{current_qty:Math.max(0,(parseFloat(s.current_qty)||0)-qty)});
   showToast('Waste logged.','success'); closeModal('modal-log-waste'); loadWaste();
 });
 
@@ -1559,13 +1580,17 @@ document.getElementById('ms-btn-clockout').addEventListener('click', async () =>
 // ═══════════════════════════════════════════════════
 //  EDIT ITEMS — list view with Edit / Recipe / Delete
 // ═══════════════════════════════════════════════════
-let _editCat='all', _editSearch='';
+let _editCat='all', _editSearch='', _premadeSubCat='all';
 function loadEditItems(cat){
   _editCat=cat||_editCat;
   S.products=DB.get('products');
-  const grid=document.getElementById('edit-items-grid');
   const q=(_editSearch||'').toLowerCase();
-  const filtered=S.products.filter(p=>catMatch(p,_editCat)&&(!q||p.name.toLowerCase().includes(q)));
+  let filtered=S.products.filter(p=>catMatch(p,_editCat)&&(!q||p.name.toLowerCase().includes(q)));
+  // Sub-category filter when in premade view
+  if(_editCat==='premade' && _premadeSubCat!=='all'){
+    filtered=filtered.filter(p=>(p.pm_subcategory||'')===_premadeSubCat);
+  }
+  const grid=document.getElementById('edit-items-grid');
   if(!filtered.length){grid.innerHTML='<p class="empty-state">No products found.</p>';return;}
   grid.innerHTML=filtered.map(p=>`
     <div class="edit-item-row" data-id="${p.id}">
@@ -1588,7 +1613,7 @@ function loadEditItems(cat){
   grid.querySelectorAll('.ei-del').forEach(b=>b.addEventListener('click',async e=>{
     e.stopPropagation();
     if(!await confirm('Delete Product',`Delete "${b.dataset.name}"?`)) return;
-    DB.set('products',DB.get('products').filter(p=>p.id!==b.dataset.id));
+    DB.remove('products',b.dataset.id);
     showToast('Product deleted.','success'); loadEditItems();
   }));
   // Double-click / right-click on row = Edit
@@ -1600,6 +1625,23 @@ function loadEditItems(cat){
 document.getElementById('edit-cat-tabs').addEventListener('click',e=>{
   const t=e.target.closest('.cat-tab'); if(!t) return;
   document.querySelectorAll('#edit-cat-tabs .cat-tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
+  const subBar=document.getElementById('premade-sub-tabs');
+  if(t.dataset.cat==='premade'){
+    _premadeSubCat='all';
+    // Build sub-tabs from unique pm_subcategory values in premade products
+    const prods=DB.get('products').filter(p=>catMatch(p,'premade'));
+    const subCats=[...new Set(prods.map(p=>p.pm_subcategory).filter(Boolean))];
+    subBar.innerHTML=`<button class="cat-tab active" data-sub="all">All</button>`
+      +subCats.map(s=>`<button class="cat-tab" data-sub="${s}">${s}</button>`).join('');
+    subBar.style.display='';
+    subBar.querySelectorAll('.cat-tab').forEach(b=>b.addEventListener('click',()=>{
+      subBar.querySelectorAll('.cat-tab').forEach(x=>x.classList.remove('active')); b.classList.add('active');
+      _premadeSubCat=b.dataset.sub; loadEditItems();
+    }));
+  } else {
+    subBar.style.display='none';
+    _premadeSubCat='all';
+  }
   loadEditItems(t.dataset.cat);
 });
 document.getElementById('edit-search').addEventListener('input',e=>{_editSearch=e.target.value;loadEditItems();});
@@ -1713,14 +1755,16 @@ document.getElementById('btn-save-product').addEventListener('click',()=>{
   const name=document.getElementById('prod-name').value.trim();
   const price=parseFloat(document.getElementById('prod-price').value)||0;
   if(!name||price<=0){showToast('Name and price required.','error');return;}
-  const icons={'Coffee & Espresso':'☕','Specialty Matcha':'🍵','Milktea':'🧋','Food':'🥐','Pre Made':'🥤'};
+  const cats=DB.get('categories',[]);
+  const selectedCat=cats.find(c=>c.key===NPM.cat);
+  const emoji=selectedCat?.emoji||'☕';
   const sizes=[];
   if(document.getElementById('size-small').checked) sizes.push('SMALL');
   if(document.getElementById('size-medium').checked) sizes.push('MEDIUM');
   if(document.getElementById('size-large').checked) sizes.push('LARGE');
   const hasTemp=document.getElementById('prod-has-temp').checked;
   const hasAddon=document.getElementById('prod-has-addon').checked;
-  DB.push('products',{id:DB.uid(),name,emoji:icons[NPM.cat]||'☕',category:NPM.cat,base_price:price,description:document.getElementById('prod-desc').value.trim(),has_temperature:hasTemp?1:0,has_size:hasTemp&&sizes.length>0?1:0,has_addon:hasTemp&&hasAddon&&NPM.addons.length>0?1:0,serving_var:hasTemp?NPM.sv:'NONE',sizes_enabled:hasTemp?sizes:[],medium_add:parseFloat(document.getElementById('size-medium-price').value)||0,large_add:parseFloat(document.getElementById('size-large-price').value)||0,hot_add:0,iced_add:0,recipe:[...NPM.recipe],storage_type:'fresh',created_at:new Date().toISOString()});
+  DB.push('products',{id:DB.uid(),name,emoji,category:NPM.cat,base_price:price,description:document.getElementById('prod-desc').value.trim(),has_temperature:hasTemp?1:0,has_size:hasTemp&&sizes.length>0?1:0,has_addon:hasTemp&&hasAddon&&NPM.addons.length>0?1:0,serving_var:hasTemp?NPM.sv:'NONE',sizes_enabled:hasTemp?sizes:[],medium_add:parseFloat(document.getElementById('size-medium-price').value)||0,large_add:parseFloat(document.getElementById('size-large-price').value)||0,hot_add:0,iced_add:0,recipe:[...NPM.recipe],storage_type:'fresh',created_at:new Date().toISOString()});
   showToast('Product added.','success'); closeModal('modal-add-product');
   S.products=DB.get('products'); loadEditItems();
 });
@@ -1838,7 +1882,7 @@ document.getElementById('btn-update-product').addEventListener('click',()=>{
   // Infer emoji from category if not changed manually
   const catIcons={'Coffee & Espresso':'☕','Specialty Matcha':'🍵','Milktea':'🧋','Food':'🥐','Pre Made':'🥤'};
   const emoji=_epEmoji!==catIcons[products[idx].category]?_epEmoji:(catIcons[cat]||_epEmoji);
-  products[idx]={...products[idx],name,emoji,category:cat,base_price:price,
+  const updatedProduct={...products[idx],name,emoji,category:cat,base_price:price,
     has_temperature:hasTemp?1:0,has_size:hasTemp&&sizes.length>0?1:0,
     has_addon:hasTemp&&hasAddon&&DB.get('addons').length>0?1:0,
     serving_var:hasTemp?_epSv:'NONE',sizes_enabled:hasTemp?sizes:[],
@@ -1847,7 +1891,7 @@ document.getElementById('btn-update-product').addEventListener('click',()=>{
     hot_add:parseFloat(document.getElementById('edit-hot-surcharge').value)||0,
     iced_add:parseFloat(document.getElementById('edit-iced-surcharge').value)||0,
   };
-  DB.set('products',products); S.products=products;
+  DB.update('products',updatedProduct.id,updatedProduct); S.products=DB.get('products');
   showToast('Product updated.','success'); closeModal('modal-edit-product'); loadEditItems();
 });
 
@@ -1918,8 +1962,8 @@ document.getElementById('btn-save-recipe').addEventListener('click',()=>{
   if(_recipeItems.some(r=>!r.stockId)){showToast('Select an ingredient for every row.','error');return;}
   const products=DB.get('products'); const idx=products.findIndex(p=>p.id===_recipeProductId);
   if(idx===-1) return;
-  products[idx].recipe=_recipeItems.map(r=>({stockId:r.stockId,name:r.name,qty:r.qty,unit:r.unit}));
-  DB.set('products',products); S.products=products;
+  const recipe=_recipeItems.map(r=>({stockId:r.stockId,name:r.name,qty:r.qty,unit:r.unit}));
+  DB.update('products',_recipeProductId,{recipe}); S.products=DB.get('products');
   showToast('Recipe saved.','success'); closeModal('modal-recipe');
 });
 
@@ -1949,7 +1993,7 @@ function loadPremade(){
   document.querySelectorAll('[data-del]').forEach(btn=>btn.addEventListener('click',async e=>{
     e.stopPropagation();
     if(!await confirm('Delete','Remove this premade stock?')) return;
-    DB.set('products',DB.get('products').filter(p=>p.id!==btn.dataset.del));
+    DB.remove('products',btn.dataset.del);
     showToast('Removed.','success'); loadPremade();
   }));
 }
@@ -2006,8 +2050,10 @@ document.getElementById('pm-btn-finalize').addEventListener('click',()=>{
   const qty=parseInt(document.getElementById('pm-qty').value)||1;
   if(!name){showToast('Item name required.','error');return;}
   if(price<=0){showToast('Price must be > 0.','error');return;}
-  const icons={'Coffee & Espresso':'☕','Food':'🍛','Milktea':'🧋','Pastry':'🥐'};
-  DB.push('products',{id:DB.uid(),name,emoji:icons[PM.cat]||'🥤',category:'Pre Made',base_price:price,has_temperature:0,has_size:0,has_addon:0,serving_var:'NONE',sizes_enabled:[],storage_type:PM.storage,batch_qty:qty,recipe:[...PM.recipe],created_at:new Date().toISOString()});
+  const cats=DB.get('categories',[]);
+  const selectedPmCat=cats.find(c=>c.key===PM.cat);
+  const pmEmoji=selectedPmCat?.emoji||'🥤';
+  DB.push('products',{id:DB.uid(),name,emoji:pmEmoji,category:'Pre Made',pm_subcategory:PM.cat,base_price:price,has_temperature:0,has_size:0,has_addon:0,serving_var:'NONE',sizes_enabled:[],storage_type:PM.storage,batch_qty:qty,recipe:[...PM.recipe],created_at:new Date().toISOString()});
   // Deduct ingredients used to make this batch
   deductRecipeFromInventory(PM.recipe,qty);
   showToast('Premade product added.','success'); closeModal('modal-add-premade'); loadPremade();
@@ -2554,9 +2600,9 @@ function openInvoicePreview(sale){
       const raw = localStorage.getItem("syncpos_session");
       if (raw) {
         const token = JSON.parse(raw);
-        const found = DB.get("users").find(
-          u => u.account_id === token.account_id && u.pin === token.pin
-        );
+        const found =
+          TEMP_ACCOUNTS.find(u => u.account_id === token.account_id && u.pin === token.pin) ||
+          DB.get("users").find(u => u.account_id === token.account_id && u.pin === token.pin);
         if (found) {
           window.S.user = found;
           initPOS();
