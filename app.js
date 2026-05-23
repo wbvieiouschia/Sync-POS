@@ -605,7 +605,12 @@ document.querySelectorAll('.quick-cash').forEach(btn=>btn.addEventListener('clic
   const sub=S.orderItems.reduce((s,i)=>s+i.price,0);
   const total=Math.max(0,sub-(meta.totalDiscount||0))+(meta.convFee||0);
   const inp=document.getElementById('cash-tendered');
-  inp.value=btn.dataset.amount==='exact'?total.toFixed(2):btn.dataset.amount;
+  if(btn.dataset.amount==='exact'){
+    inp.value=total.toFixed(2);
+  } else {
+    const current=parseFloat(inp.value)||0;
+    inp.value=(current+parseFloat(btn.dataset.amount)).toFixed(2);
+  }
   updateChange();
 }));
 document.getElementById('btn-void-order').addEventListener('click',async()=>{
@@ -644,6 +649,8 @@ document.getElementById('btn-charge').addEventListener('click',async()=>{
   // ─────────────────────────────────────────────────────
   renderReceipt(sale,sub,td,cf,cash-total);
   openModal('modal-receipt');
+  // Auto-print as soon as the receipt modal has rendered
+  setTimeout(() => printReceipt('receipt-body'), 300);
 });
 function renderReceipt(sale,sub,td,cf,change){
   const meta=S.orderMeta||{};
