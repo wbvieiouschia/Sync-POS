@@ -92,8 +92,8 @@
       <button class="nav-item" data-page="expenses"><span class="nav-icon">💸</span><span class="nav-label">Expenses</span></button>
       <button class="nav-item" data-page="attendance"><span class="nav-icon">📅</span><span class="nav-label">Attendance</span></button>
       <p class="nav-section">System</p>
-      <button class="nav-item admin-only" data-page="register"><span class="nav-icon">📋</span><span class="nav-label">Register Staff</span></button>
-      <button class="nav-item admin-only" data-page="manage-staff"><span class="nav-icon">👥</span><span class="nav-label">Manage Staff</span></button>
+      <button class="nav-item manager-only" data-page="register"><span class="nav-icon">📋</span><span class="nav-label">Register Staff</span></button>
+      <button class="nav-item manager-only" data-page="manage-staff"><span class="nav-icon">👥</span><span class="nav-label">Manage Staff</span></button>
       <button class="nav-item" data-page="profile"><span class="nav-icon">🙋</span><span class="nav-label">My Profile</span></button>
     </nav>
     <div class="sidebar-footer">
@@ -119,7 +119,7 @@
               <button class="ot-disc-tile" id="disc-senior" data-type="senior"><span class="ot-disc-name">Senior Citizen</span><span class="ot-disc-amt" id="disc-senior-amt">20.00</span></button>
               <button class="ot-disc-tile" id="disc-pwd" data-type="pwd"><span class="ot-disc-name">PWD</span><span class="ot-disc-amt" id="disc-pwd-amt">20.00</span></button>
               <div id="ot-custom-disc-tiles"></div>
-              <button class="ot-disc-add admin-only" id="btn-add-discount">+ Add Discount</button>
+              <button class="ot-disc-add manager-only" id="btn-add-discount">+ Add Discount</button>
             </div>
             <div class="ot-custom-disc-input" id="ot-custom-disc-input" hidden>
               <label class="field-label" for="custom-disc-amount">Discount Amount (₱)</label>
@@ -357,6 +357,21 @@
             <button class="att-view-item" data-attview="syslog">🔐 System Log</button>
           </div>
         </div>
+      </div>
+
+      <!-- Date Filter Bar -->
+      <div class="att-filter-bar">
+        <div class="att-filter-group">
+          <label class="att-filter-label" for="att-date-from">From</label>
+          <input class="att-filter-input" type="date" id="att-date-from"/>
+        </div>
+        <span class="att-filter-sep">→</span>
+        <div class="att-filter-group">
+          <label class="att-filter-label" for="att-date-to">To</label>
+          <input class="att-filter-input" type="date" id="att-date-to"/>
+        </div>
+        <button class="btn btn-outline btn-sm" id="att-filter-today">Today</button>
+        <button class="btn btn-outline btn-sm" id="att-filter-clear">Clear</button>
       </div>
 
       <!-- Attendance Table (Clock In / Clock Out) -->
@@ -634,6 +649,69 @@
   </div>
 </dialog>
 
+<!-- Stock Detail Modal -->
+<dialog id="modal-stock-detail" class="modal modal-sd">
+  <div class="sd-titlebar">
+    <span class="sd-titlebar-icon">📦</span>
+    <div class="sd-titlebar-info">
+      <span class="sd-titlebar-name" id="sd-name">—</span>
+      <span class="sd-titlebar-sub">Current Stock: <span id="sd-cur">0</span> / <span id="sd-max">0</span></span>
+    </div>
+    <button class="sd-close-btn modal-close" data-close="modal-stock-detail">✕</button>
+  </div>
+
+  <div class="sd-body">
+    <!-- Usage Breakdown -->
+    <div class="sd-section-label">USAGE BREAKDOWN (30 DAYS)</div>
+    <div class="sd-total-row">
+      <span class="sd-total-label">Total Deducted:</span>
+      <span class="sd-total-val" id="sd-total-deducted">0.00</span>
+    </div>
+    <div class="sd-progress-wrap">
+      <div class="sd-progress-bar">
+        <div class="sd-progress-fill" id="sd-progress-fill" style="width:0%"></div>
+      </div>
+      <span class="sd-progress-label" id="sd-progress-label">No usage data recorded yet</span>
+    </div>
+
+    <div class="sd-breakdown-grid">
+      <div class="sd-breakdown-item">
+        <span class="sd-dot sd-dot-blue"></span>
+        <span class="sd-breakdown-key">POS Orders</span>
+        <span class="sd-breakdown-val" id="sd-b-orders">0% (0.00)</span>
+      </div>
+      <div class="sd-breakdown-item">
+        <span class="sd-dot sd-dot-amber"></span>
+        <span class="sd-breakdown-key">Spills</span>
+        <span class="sd-breakdown-val sd-val-amber" id="sd-b-spills">0% (0.00)</span>
+      </div>
+      <div class="sd-breakdown-item">
+        <span class="sd-dot sd-dot-red"></span>
+        <span class="sd-breakdown-key">Remakes</span>
+        <span class="sd-breakdown-val sd-val-red" id="sd-b-remakes">0% (0.00)</span>
+      </div>
+      <div class="sd-breakdown-item">
+        <span class="sd-dot sd-dot-dark"></span>
+        <span class="sd-breakdown-key">Spoiled</span>
+        <span class="sd-breakdown-val" id="sd-b-spoiled">0% (0.00)</span>
+      </div>
+      <div class="sd-breakdown-item">
+        <span class="sd-dot sd-dot-muted"></span>
+        <span class="sd-breakdown-key">Manual Reduce</span>
+        <span class="sd-breakdown-val" id="sd-b-manual">0% (0.00)</span>
+      </div>
+    </div>
+
+    <div class="sd-divider"></div>
+
+    <!-- Movement Log -->
+    <div class="sd-section-label">STOCK MOVEMENT LOG</div>
+    <div class="sd-log" id="sd-log">
+      <p class="sd-log-empty">No movement records yet.</p>
+    </div>
+  </div>
+</dialog>
+
 <!-- Add Procurement Entry -->
 <dialog id="modal-add-procurement" class="modal">
   <div class="modal-header"><h3 class="modal-title">Add Procurement Entry</h3><button class="btn-icon modal-close" data-close="modal-add-procurement">✕</button></div>
@@ -864,6 +942,29 @@
     <p style="font-size:1.05rem;font-weight:800;color:var(--espresso)" id="resolve-item-name">—</p>
     <p style="font-size:.8rem;color:var(--text-muted)" id="resolve-item-meta">—</p>
     <button class="resolve-waste-btn" id="btn-resolve-waste">Waste (Expired)</button>
+  </div>
+</dialog>
+
+<!-- Edit Discount Modal (Senior / PWD right-click) -->
+<dialog id="modal-edit-discount" class="modal" style="width:min(92vw,360px)">
+  <div class="modal-header">
+    <h3 class="modal-title">Edit Discount</h3>
+    <button class="btn-icon modal-close" data-close="modal-edit-discount">✕</button>
+  </div>
+  <div class="modal-body" style="padding:20px 24px">
+    <p style="font-size:.82rem;color:var(--text-muted);margin-bottom:18px">Update the discount amount. The name cannot be changed.</p>
+    <div class="field-group" style="margin-bottom:14px">
+      <label class="field-label">Discount Name</label>
+      <input id="edit-disc-name" class="field-input" type="text" placeholder="Discount name"/>
+    </div>
+    <div class="field-group">
+      <label class="field-label">Discount Amount (₱)</label>
+      <input id="edit-disc-amount" class="field-input" type="number" min="0" step="0.01" placeholder="0.00"/>
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline" id="btn-edit-disc-cancel">Cancel</button>
+    <button class="btn btn-primary" id="btn-edit-disc-save">Save Changes</button>
   </div>
 </dialog>
 

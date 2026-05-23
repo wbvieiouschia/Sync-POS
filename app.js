@@ -13,7 +13,8 @@ const S = {
 //  UTILS
 // ═══════════════════════════════════════════════════
 const peso = n => `₱ ${Number(n||0).toFixed(2)}`;
-const isAdmin = () => S.user?.role==='admin'||S.user?.admin_access;
+const isAdmin = () => !!S.user?.admin_access;
+const isManager = () => isAdmin() || (S.user?.role_type || '').toLowerCase() === 'manager';
 function showToast(msg,type='info',dur=3000){
   // If a dialog is open, render the toast inside it so it appears above
   // the browser's native top-layer (which traps elements with lower z-index).
@@ -180,20 +181,32 @@ document.getElementById('login-form')?.addEventListener('submit',e=>{
   try { localStorage.setItem('syncpos_session', JSON.stringify({account_id:user.account_id,pin:user.pin})); } catch(_){}
   const _today=todayStr();
   try {
-    DB.push('attendance',{id:DB.uid(),account_id:S.user.account_id,name:S.user.name,date:_today,clock_in:nowTime(),clock_out:null});
     DB.push('system_log',{id:DB.uid(),account_id:S.user.account_id,name:S.user.name,date:_today,sign_in:nowTime(),sign_out:null});
   } catch(_){}
   initPOS();
   showScreen('screen-pos');
 });
 
+// ── Role display label ───────────────────────────────────────
+// Combines role_type + admin_access into a human-readable badge:
+// admin_access=false → Manager / Barista / Employee
+// admin_access=true  → Admin - Manager / Admin - Barista / Admin (fallback)
+function getDisplayRole(user){
+  const rt=(user?.role_type||user?.role||'').toLowerCase();
+  const isAdminUser=!!user?.admin_access;
+  const roleLabel=rt==='manager'?'Manager':rt==='barista'?'Barista':rt==='employee'?'Employee':rt?rt.charAt(0).toUpperCase()+rt.slice(1):'';
+  if(isAdminUser) return roleLabel?`Admin - ${roleLabel}`:'Admin';
+  return roleLabel||'Staff';
+}
+
 // ═══════════════════════════════════════════════════
 //  INIT POS
 // ═══════════════════════════════════════════════════
 function initPOS(){
   document.getElementById('staff-name').textContent=S.user.name;
-  document.getElementById('staff-role').textContent=S.user.role.charAt(0).toUpperCase()+S.user.role.slice(1);
+  document.getElementById('staff-role').textContent=getDisplayRole(S.user);
   document.querySelectorAll('.admin-only').forEach(el=>el.style.display=isAdmin()?'':'none');
+  document.querySelectorAll('.manager-only').forEach(el=>el.style.display=isManager()?'':'none');
   document.getElementById('profile-name-text').textContent=S.user.name;
   document.getElementById('profile-role-badge').textContent=S.user.role;
   document.getElementById('profile-id-text').textContent=S.user.account_id;
@@ -258,16 +271,36 @@ function renderOT(){
   document.getElementById('disc-pwd-amt').textContent=OT.pwdAmt.toFixed(2);
   refreshDiscTiles(); refreshTypeBtns();
   const addBtn=document.getElementById('btn-add-discount');
-  if(addBtn) addBtn.style.display=isAdmin()?'':'none';
+  if(addBtn) addBtn.style.display=isManager()?'':'none';
 }
+// ── Right-click → Edit Discount modal (Senior / PWD / Custom) ─
+// _editTarget: 'senior' | 'pwd' | { customIndex: number }
+const _discEdit = { target: null };
+
+function openEditDiscModal(target, name, curAmt, e) {
+  if(e) e.preventDefault();
+  if(!isManager()){ showToast('Only managers can edit discount amounts.','error'); return; }
+  _discEdit.target = target;
+  const nameInput = document.getElementById('edit-disc-name');
+  const isCustom = target && typeof target.customIndex === 'number';
+  nameInput.value = name;
+  nameInput.disabled = !isCustom;
+  nameInput.style.background = isCustom ? '' : 'var(--surface-muted,#f4f4f4)';
+  nameInput.style.color = isCustom ? '' : 'var(--text-muted)';
+  nameInput.style.cursor = isCustom ? '' : 'not-allowed';
+  document.getElementById('edit-disc-amount').value = curAmt.toFixed(2);
+  openModal('modal-edit-discount');
+}
+
 function refreshDiscTiles(){
   document.getElementById('disc-senior').classList.toggle('active',OT.discType==='senior');
   document.getElementById('disc-pwd').classList.toggle('active',OT.discType==='pwd');
   const cc=document.getElementById('ot-custom-disc-tiles'); cc.innerHTML='';
   OT.customs.forEach((d,i)=>{
     const t=document.createElement('button'); t.className='ot-disc-tile active';
-    t.innerHTML=`<span class="ot-disc-name">${d.label}</span><span class="ot-disc-amt">${d.amount.toFixed(2)}</span>${isAdmin()?`<button class="disc-remove-x" data-i="${i}">✕</button>`:''}`;
+    t.innerHTML=`<span class="ot-disc-name">${d.label}</span><span class="ot-disc-amt">${d.amount.toFixed(2)}</span>${isManager()?`<button class="disc-remove-x" data-i="${i}">✕</button>`:''}`;
     t.addEventListener('click',e=>{const x=e.target.closest('.disc-remove-x');if(x){OT.customs.splice(+x.dataset.i,1);refreshDiscTiles();}});
+    t.addEventListener('contextmenu',e=>openEditDiscModal({customIndex:i},d.label,d.amount,e));
     cc.appendChild(t);
   });
 }
@@ -275,6 +308,37 @@ function refreshTypeBtns(){ document.querySelectorAll('.ot-type-btn').forEach(b=
 
 document.getElementById('disc-senior').addEventListener('click',()=>{OT.discType=OT.discType==='senior'?null:'senior';OT.discAmt=OT.discType?OT.seniorAmt:0;refreshDiscTiles();});
 document.getElementById('disc-pwd').addEventListener('click',()=>{OT.discType=OT.discType==='pwd'?null:'pwd';OT.discAmt=OT.discType?OT.pwdAmt:0;refreshDiscTiles();});
+document.getElementById('disc-senior').addEventListener('contextmenu',e=>openEditDiscModal('senior','Senior Citizen',OT.seniorAmt,e));
+document.getElementById('disc-pwd').addEventListener('contextmenu',e=>openEditDiscModal('pwd','PWD',OT.pwdAmt,e));
+
+document.getElementById('btn-edit-disc-cancel').addEventListener('click',()=>closeModal('modal-edit-discount'));
+document.getElementById('btn-edit-disc-save').addEventListener('click',()=>{
+  const amt=parseFloat(document.getElementById('edit-disc-amount').value);
+  if(isNaN(amt)||amt<0){showToast('Enter a valid discount amount.','error');return;}
+  const tgt=_discEdit.target;
+  let toastLabel='';
+  if(tgt==='senior'){
+    OT.seniorAmt=amt;
+    DB.set('disc_senior',String(amt));
+    document.getElementById('disc-senior-amt').textContent=amt.toFixed(2);
+    if(OT.discType==='senior') OT.discAmt=amt;
+    toastLabel='Senior Citizen';
+  } else if(tgt==='pwd'){
+    OT.pwdAmt=amt;
+    DB.set('disc_pwd',String(amt));
+    document.getElementById('disc-pwd-amt').textContent=amt.toFixed(2);
+    if(OT.discType==='pwd') OT.discAmt=amt;
+    toastLabel='PWD';
+  } else if(tgt && typeof tgt.customIndex==='number'){
+    const idx=tgt.customIndex;
+    const label=document.getElementById('edit-disc-name').value;
+    OT.customs[idx]={...OT.customs[idx],label,amount:amt};
+    toastLabel=label;
+  }
+  closeModal('modal-edit-discount');
+  showToast(`"${toastLabel}" discount updated to ₱${amt.toFixed(2)}.`,'success');
+  refreshDiscTiles();
+});
 document.getElementById('btn-add-discount').addEventListener('click',()=>{document.getElementById('ot-custom-disc-input').hidden=false;});
 document.getElementById('btn-save-custom-disc').addEventListener('click',()=>{
   const label=document.getElementById('custom-disc-label').value.trim()||'Discount';
@@ -343,7 +407,11 @@ function renderProductGrid(cat=S.activeCat,search=''){
             : `<span class="pm-order-stock-count">${remaining} left</span>`}
         </span>`;
     } else {
-      card.innerHTML=`<span class="product-emoji">${p.emoji||'☕'}</span><span class="product-name">${p.name}</span><span class="product-price">${peso(p.base_price)}</span>`;
+      // Build price display: show range if any surcharges exist
+      const _adds=[parseFloat(p.hot_add)||0,parseFloat(p.iced_add)||0,parseFloat(p.medium_add)||0,parseFloat(p.large_add)||0];
+      const _maxAdd=Math.max(..._adds);
+      const _priceLabel=_maxAdd>0?`${peso(p.base_price)} <span class="product-price-up">↑ +₱${_maxAdd}</span>`:peso(p.base_price);
+      card.innerHTML=`<span class="product-emoji">${p.emoji||'☕'}</span><span class="product-name">${p.name}</span><span class="product-price">${_priceLabel}</span>`;
     }
     card.addEventListener('click',()=>{ if(!card.disabled) openVariantPicker(p); });
     grid.appendChild(card);
@@ -387,7 +455,7 @@ function openVariantPicker(p){
   if(p.has_temperature){
     const temps=p.serving_var==='HOT'?['HOT']:p.serving_var==='ICED'?['ICED']:['HOT','ICED'];
     to.innerHTML=temps.map(t=>`<label class="picker-chip"><input type="radio" name="temp" value="${t}"/><span>${t==='HOT'?'🔥 Hot':'🧊 Iced'}</span></label>`).join('');
-    if(temps.length===1) to.querySelector('input').checked=true;
+    to.innerHTML=temps.map(t=>{const add=t==='HOT'?(parseFloat(p.hot_add)||0):(parseFloat(p.iced_add)||0);return`<label class="picker-chip"><input type="radio" name="temp" value="${t}" data-add="${add}"/><span>${t==='HOT'?'🔥 Hot':'🧊 Iced'}${add>0?' +₱'+add:''}</span></label>`;}).join('');
     ts.hidden=false;
   }else{ts.hidden=true;}
   // Size
@@ -412,8 +480,10 @@ function getPickerPrice(){
   const sizeEl=document.querySelector('input[name="psize"]:checked');
   const sizeAdd=sizeEl?parseFloat(sizeEl.dataset.add)||0:0;
   const addonToggle=document.getElementById('addon-toggle');
+  const tempEl=document.querySelector('input[name="temp"]:checked');
+  const tempAdd=tempEl?parseFloat(tempEl.dataset.add)||0:0;
   const addonAdd=(addonToggle&&addonToggle.checked)?[...document.querySelectorAll('input[name="addon"]:checked')].reduce((s,el)=>s+(parseFloat(el.dataset.price)||0),0):0;
-  return (_pp.base_price||0)+sizeAdd+addonAdd;
+  return (_pp.base_price||0)+tempAdd+sizeAdd+addonAdd;
 }
 function updatePickerTotal(){ document.getElementById('picker-total').textContent=peso(getPickerPrice()*_pq); }
 document.getElementById('qty-minus').addEventListener('click',()=>{if(_pq>1){_pq--;document.getElementById('qty-display').value=_pq;updatePickerTotal();}});
@@ -690,7 +760,7 @@ function loadInventory(){
     const lvl=stockLevel(s.current_qty,s.max_qty);
     const ids=(s._ids||[s.id]).join(',');
     const actions=isAdmin()?`<div class="inv-card-actions"><button class="inv-card-btn-reduce" data-action="reduce" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}" data-unit="${s.unit}">Reduce</button><button class="inv-card-btn-restock" data-action="restock" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}">Restock</button></div><button class="inv-card-btn-remove" data-action="del" data-ids="${ids}" data-name="${s.name}">🗑 Remove Item</button>`:'';
-    return`<div class="inv-card ${lvl.cls}"><div class="inv-card-toprow"><span class="inv-card-label">Inventory</span><span class="inv-card-pct">${pct}%</span></div><p class="inv-card-name">${s.name}</p><p class="inv-card-qty">${s.current_qty} ${s.unit} / ${s.max_qty} ${s.unit}</p><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>${s.expiry_date?`<p class="inv-card-expiry">Exp: ${s.expiry_date}</p>`:''}${actions}</div>`;
+    return`<div class="inv-card ${lvl.cls}" data-ids="${ids}" data-name="${s.name}" data-unit="${s.unit}" data-cur="${s.current_qty}" data-max="${s.max_qty}"><div class="inv-card-toprow"><span class="inv-card-label">Inventory</span><span class="inv-card-pct">${pct}%</span></div><p class="inv-card-name">${s.name}</p><p class="inv-card-qty">${s.current_qty} ${s.unit} / ${s.max_qty} ${s.unit}</p><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>${s.expiry_date?`<p class="inv-card-expiry">Exp: ${s.expiry_date}</p>`:''}${actions}</div>`;
   }).join('');
 }
 document.getElementById('inventory-grid').addEventListener('click',async e=>{
@@ -739,6 +809,139 @@ document.getElementById('btn-save-stock').addEventListener('click',()=>{
   if(!name){showToast('Item name required.','error');return;}
   DB.push('inventory',{id:DB.uid(),name,current_qty:qty,max_qty:max,unit,expiry_date:expiry,created_at:new Date().toISOString()});
   showToast('Stock item added.','success'); closeModal('modal-add-stock'); loadInventory();
+});
+
+// ═══════════════════════════════════════════════════
+//  STOCK DETAIL MODAL
+// ═══════════════════════════════════════════════════
+function openStockDetail(stock){
+  // stock = merged stock object with _ids[], name, current_qty, max_qty, unit
+  const ids=new Set(stock._ids||[stock.id]);
+  const name=stock.name;
+  const unit=stock.unit||'';
+  const cur=parseFloat(stock.current_qty)||0;
+  const max=parseFloat(stock.max_qty)||0;
+  const now=Date.now();
+  const cutoff=now-(30*24*60*60*1000);
+
+  // Header
+  document.getElementById('sd-name').textContent=name;
+  document.getElementById('sd-cur').textContent=cur+' '+unit;
+  document.getElementById('sd-max').textContent=max+' '+unit;
+
+  // ── Gather usage from orders (last 30 days) ──────────────
+  const products=DB.get('products');
+  const orders=DB.get('orders').filter(o=>new Date(o.created_at).getTime()>=cutoff);
+
+  // Build set of product_ids whose recipe uses this stock
+  const relatedProductIds=new Set();
+  products.forEach(p=>{
+    if(!p.recipe||!p.recipe.length) return;
+    if(p.recipe.some(r=>ids.has(r.stockId||r.id))) relatedProductIds.add(p.id);
+  });
+
+  // Sum qty deducted via POS orders
+  let orderQty=0;
+  const orderMovements=[];
+  orders.forEach(o=>{
+    o.items&&o.items.forEach(item=>{
+      if(!relatedProductIds.has(item.product_id)) return;
+      const prod=products.find(p=>p.id===item.product_id);
+      if(!prod||!prod.recipe) return;
+      prod.recipe.forEach(r=>{
+        if(ids.has(r.stockId||r.id)){
+          const q=parseFloat(r.qty)||0;
+          orderQty+=q;
+          orderMovements.push({type:'order',desc:`POS: ${item.name||prod.name}`,qty:-q,at:o.created_at});
+        }
+      });
+    });
+  });
+
+  // ── Gather waste (last 30 days) ──────────────────────────
+  const waste=DB.get('waste').filter(w=>{
+    if(new Date(w.logged_at).getTime()<cutoff) return false;
+    // match by stock_id (could be any of our _ids) or stock_name
+    return ids.has(w.stock_id)||w.stock_name===name;
+  });
+  let spillQty=0,remakeQty=0,spoiledQty=0,manualQty=0;
+  const wasteMovements=[];
+  waste.forEach(w=>{
+    const q=parseFloat(w.qty)||0;
+    const reason=(w.reason||'').toUpperCase();
+    if(reason==='SPILLED') spillQty+=q;
+    else if(reason==='REMAKE') remakeQty+=q;
+    else if(reason==='EXPIRED') spoiledQty+=q;
+    else manualQty+=q;
+    wasteMovements.push({type:'waste',reason,desc:`${reason.charAt(0)+reason.slice(1).toLowerCase()}: ${w.stock_name||name}`,qty:-q,at:w.logged_at});
+  });
+
+  // ── Gather manual reduces (from system_log if available, else estimate) ──
+  // system_log entries won't exist in all installs; skip silently
+
+  const totalDeducted=orderQty+spillQty+remakeQty+spoiledQty+manualQty;
+  const pct=totalDeducted>0?Math.min(100,Math.round(totalDeducted/Math.max(max,1)*100)):0;
+
+  function fmt(q){ return q.toFixed(2)+' '+unit; }
+  function pctStr(q){ return totalDeducted>0?Math.round(q/totalDeducted*100)+'%':'0%'; }
+
+  document.getElementById('sd-total-deducted').textContent=fmt(totalDeducted);
+  const fill=document.getElementById('sd-progress-fill');
+  const lbl=document.getElementById('sd-progress-label');
+  fill.style.width=(pct||0)+'%';
+  lbl.textContent=totalDeducted>0?pct+'% of max consumed (30d)':'No usage data recorded yet';
+
+  document.getElementById('sd-b-orders').textContent=`${pctStr(orderQty)} (${fmt(orderQty)})`;
+  document.getElementById('sd-b-spills').textContent=`${pctStr(spillQty)} (${fmt(spillQty)})`;
+  document.getElementById('sd-b-remakes').textContent=`${pctStr(remakeQty)} (${fmt(remakeQty)})`;
+  document.getElementById('sd-b-spoiled').textContent=`${pctStr(spoiledQty)} (${fmt(spoiledQty)})`;
+  document.getElementById('sd-b-manual').textContent=`${pctStr(manualQty)} (${fmt(manualQty)})`;
+
+  // ── Movement Log ─────────────────────────────────────────
+  const movements=[...orderMovements,...wasteMovements]
+    .sort((a,b)=>new Date(b.at)-new Date(a.at))
+    .slice(0,40);
+
+  const logEl=document.getElementById('sd-log');
+  if(!movements.length){
+    logEl.innerHTML='<p class="sd-log-empty">No movement records yet.</p>';
+  } else {
+    const iconMap={order:'🛒',waste:'🗑',restock:'📦',reduce:'➖'};
+    const clsMap={order:'log-order',SPILLED:'log-waste',REMAKE:'log-waste',EXPIRED:'log-waste',reduce:'log-reduce',restock:'log-restock'};
+    logEl.innerHTML=movements.map(m=>{
+      const cls=m.type==='order'?'log-order':(clsMap[m.reason]||'log-waste');
+      const icon=m.type==='order'?'🛒':'♻️';
+      const sign=m.qty<0?'-':'+';
+      const abs=Math.abs(m.qty).toFixed(2);
+      const timeStr=new Date(m.at).toLocaleString('en-PH',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+      return`<div class="sd-log-row">
+        <div class="sd-log-icon ${cls}">${icon}</div>
+        <div class="sd-log-info">
+          <div class="sd-log-desc">${m.desc}</div>
+          <div class="sd-log-time">${timeStr}</div>
+        </div>
+        <div class="sd-log-qty ${m.qty<0?'neg':'pos'}">${sign}${abs} ${unit}</div>
+      </div>`;
+    }).join('');
+  }
+
+  openModal('modal-stock-detail');
+}
+
+// Click on inv-card → open detail (but not if a button inside was clicked)
+document.getElementById('inventory-grid').addEventListener('click',e=>{
+  if(e.target.closest('button')) return; // let action buttons bubble to existing handler
+  const card=e.target.closest('.inv-card');
+  if(!card) return;
+  const ids=(card.dataset.ids||'').split(',').filter(Boolean);
+  openStockDetail({
+    name:card.dataset.name||'',
+    current_qty:parseFloat(card.dataset.cur)||0,
+    max_qty:parseFloat(card.dataset.max)||0,
+    unit:card.dataset.unit||'',
+    _ids:ids,
+    id:ids[0]||''
+  });
 });
 
 // ═══════════════════════════════════════════════════
@@ -1092,14 +1295,53 @@ document.getElementById('btn-save-custom-expense').addEventListener('click',()=>
 // ═══════════════════════════════════════════════════
 //  ATTENDANCE
 // ═══════════════════════════════════════════════════
+function getAttDateRange(){
+  const from=document.getElementById('att-date-from')?.value||'';
+  const to=document.getElementById('att-date-to')?.value||'';
+  return{from,to};
+}
+function normDate(d){
+  if(!d) return '';
+  if(/^\d{4}-\d{2}-\d{2}$/.test(d)) return d;
+  const p=d.split('/');
+  if(p.length===3) return `${p[2]}-${String(p[0]).padStart(2,'0')}-${String(p[1]).padStart(2,'0')}`;
+  return d;
+}
+function inDateRange(recordDate,from,to){
+  const nd=normDate(recordDate);
+  if(from&&nd<from) return false;
+  if(to&&nd>to) return false;
+  return true;
+}
 function renderAttendance(){
-  const records=DB.get('attendance',[]);
-  document.getElementById('attendance-tbody').innerHTML=records.slice().reverse().map(a=>`<tr><td>${a.name}</td><td>${a.date}</td><td>${a.clock_in||'—'}</td><td>${a.clock_out||'—'}</td><td>${a.clock_in&&a.clock_out?calcHours(a.clock_in,a.clock_out):'—'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-state">No records.</td></tr>';
+  const {from,to}=getAttDateRange();
+  const records=DB.get('attendance',[]).filter(a=>inDateRange(a.date,from,to));
+  document.getElementById('attendance-tbody').innerHTML=records.slice().reverse().map(a=>`<tr><td>${a.name}</td><td>${a.date}</td><td>${a.clock_in||'—'}</td><td>${a.clock_out||'—'}</td><td>${a.clock_in&&a.clock_out?calcHours(a.clock_in,a.clock_out):'—'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-state">No records found.</td></tr>';
 }
 function renderSystemLog(){
-  const logs=DB.get('system_log',[]);
-  document.getElementById('syslog-tbody').innerHTML=logs.slice().reverse().map(l=>`<tr><td>${l.name}</td><td>${l.date}</td><td>${l.sign_in||'—'}</td><td>${l.sign_out||'—'}</td><td>${l.sign_in&&l.sign_out?calcHours(l.sign_in,l.sign_out):'—'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-state">No records.</td></tr>';
+  const {from,to}=getAttDateRange();
+  const logs=DB.get('system_log',[]).filter(l=>inDateRange(l.date,from,to));
+  document.getElementById('syslog-tbody').innerHTML=logs.slice().reverse().map(l=>`<tr><td>${l.name}</td><td>${l.date}</td><td>${l.sign_in||'—'}</td><td>${l.sign_out||'—'}</td><td>${l.sign_in&&l.sign_out?calcHours(l.sign_in,l.sign_out):'—'}</td></tr>`).join('')||'<tr><td colspan="5" class="empty-state">No records found.</td></tr>';
 }
+(function(){
+  function rerender(){
+    const syslogHidden=document.getElementById('att-panel-syslog')?.hidden;
+    if(syslogHidden===false) renderSystemLog(); else renderAttendance();
+  }
+  document.getElementById('att-date-from')?.addEventListener('change',rerender);
+  document.getElementById('att-date-to')?.addEventListener('change',rerender);
+  document.getElementById('att-filter-today')?.addEventListener('click',()=>{
+    const t=new Date().toISOString().slice(0,10);
+    document.getElementById('att-date-from').value=t;
+    document.getElementById('att-date-to').value=t;
+    rerender();
+  });
+  document.getElementById('att-filter-clear')?.addEventListener('click',()=>{
+    document.getElementById('att-date-from').value='';
+    document.getElementById('att-date-to').value='';
+    rerender();
+  });
+})();
 
 // Attendance view dropdown toggle
 (function(){
@@ -1131,8 +1373,8 @@ document.getElementById('btn-clock-out').addEventListener('click',async()=>{
   const rec=records.slice().reverse().find(a=>a.account_id===S.user.account_id&&a.date===todayStr()&&!a.clock_out);
   if(!rec){showToast('No open clock-in record for today.','error');return;}
   if(!await confirm('Clock Out','Record clock-out for now?')) return;
-  rec.clock_out=nowTime(); DB.set('attendance',records);
-  showToast(`Clocked out at ${rec.clock_out}`,'success');
+  const clockOutTime=nowTime(); DB.update('attendance',rec.id,{clock_out:clockOutTime});
+  showToast(`Clocked out at ${clockOutTime}`,'success');
   if(document.querySelector('.page[data-page="attendance"].active')) renderAttendance();
 });
 // Clock-in via sidebar icon replaced with auto-clock-in on POS init
@@ -1306,11 +1548,12 @@ function openStaffDetail(accountId){
   const adminBtn = document.getElementById('ms-btn-admin');
   adminBtn.textContent = u.admin_access ? 'REVOKE ADMIN ACCESS' : 'ALLOW ADMIN ACCESS';
   adminBtn.classList.toggle('ms-btn-admin-revoke', !!u.admin_access);
+  adminBtn.style.display = isAdmin() ? '' : 'none';
 
   // Promotion chain: employee -> barista -> manager; hide button if already manager/admin
   const _rt = (u.role_type || u.role || 'employee').toLowerCase();
   const _promoteBtn = document.getElementById('ms-btn-promote');
-  if(_rt === 'manager' || u.role === 'admin'){
+  if(_rt === 'manager'){
     _promoteBtn.style.display = 'none';
   } else {
     _promoteBtn.style.display = '';
@@ -1551,7 +1794,7 @@ document.getElementById('ms-btn-promote').addEventListener('click', async () => 
   const u = users.find(x => x.account_id === _msCurrentId);
   if(!u) return;
   const currentRole = (u.role_type || u.role || 'employee').toLowerCase();
-  if(currentRole === 'manager' || u.role === 'admin'){
+  if(currentRole === 'manager'){
     showToast('This staff member cannot be promoted further.','info'); return;
   }
   const nextRole = currentRole === 'barista' ? 'manager' : 'barista';
@@ -2212,9 +2455,21 @@ function showCatPopover(anchorEvt, context){
   const pop = document.getElementById('cat-edit-popover');
   const bk  = document.getElementById('cat-popover-backdrop');
   bk.style.display = 'block';
-  pop.style.left = '50%';
-  pop.style.top  = '50%';
-  pop.style.transform = 'translate(-50%,-50%)';
+  if(anchorEvt){
+    const margin = 8;
+    const pw = 260, ph = 320;
+    let x = anchorEvt.clientX + margin;
+    let y = anchorEvt.clientY + margin;
+    if(x + pw > window.innerWidth)  x = window.innerWidth - pw - margin;
+    if(y + ph > window.innerHeight) y = window.innerHeight - ph - margin;
+    pop.style.left = x + 'px';
+    pop.style.top  = y + 'px';
+    pop.style.transform = '';
+  } else {
+    pop.style.left = '50%';
+    pop.style.top  = '50%';
+    pop.style.transform = 'translate(-50%,-50%)';
+  }
   if(!pop.open){ pop.showModal(); }
 }
 
