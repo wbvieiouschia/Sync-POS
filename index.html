@@ -669,6 +669,7 @@
   <div class="npm-body">
     <div class="npm-section-label">1. ITEM DETAILS</div>
     <div class="npm-cat-tiles" id="npm-cat-tiles"></div>
+    <p style="font-size:.7rem;color:var(--text-muted);margin:-6px 0 8px;padding-left:2px">💡 Right click category to edit</p>
     <div class="field-group npm-field"><label class="npm-label">Item Name</label><input id="prod-name" class="npm-input" type="text" placeholder="e.g. Signature Iced Latte"/></div>
     <div class="form-row npm-field">
       <div class="field-group" style="flex:2"><label class="npm-label">Category</label><input id="prod-cat" class="npm-input" type="text" readonly value="Coffee &amp; Espresso"/></div>
@@ -688,6 +689,13 @@
 
     <!-- Serving Variation collapsible section (temp + cup size + add-ons) -->
     <div id="npm-variation-section">
+      <hr class="npm-divider"/>
+      <!-- HOT / ICED surcharges -->
+      <div class="form-row npm-field" id="npm-surcharge-row">
+        <div class="field-group" id="npm-hot-col"><label class="npm-label">🔥 HOT SURCHARGE (₱)</label><input id="prod-hot-surcharge" class="npm-input" type="number" value="0" min="0" step="0.01" placeholder="+₱ 0"/><p style="font-size:.68rem;color:var(--text-muted);margin-top:3px">Added on top of base price for Hot.</p></div>
+        <div class="field-group" id="npm-iced-col"><label class="npm-label">🧊 ICED SURCHARGE (₱)</label><input id="prod-iced-surcharge" class="npm-input" type="number" value="0" min="0" step="0.01" placeholder="+₱ 0"/><p style="font-size:.68rem;color:var(--text-muted);margin-top:3px">Added on top of base price for Iced.</p></div>
+      </div>
+      <p class="npm-size-note" style="margin-bottom:8px">Surcharges are added on top of the base Selling Price.</p>
       <hr class="npm-divider"/>
       <div class="npm-label npm-field">Available Cup size:</div>
       <div class="npm-sizes-row">

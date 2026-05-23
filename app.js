@@ -15,9 +15,27 @@ const S = {
 const peso = n => `₱ ${Number(n||0).toFixed(2)}`;
 const isAdmin = () => S.user?.role==='admin'||S.user?.admin_access;
 function showToast(msg,type='info',dur=3000){
+  // If a dialog is open, render the toast inside it so it appears above
+  // the browser's native top-layer (which traps elements with lower z-index).
+  const openDialog=[...document.querySelectorAll('dialog')].find(d=>d.open&&d.id!=='cat-edit-popover');
   const t=document.getElementById('toast');
-  t.textContent=msg; t.className=`toast toast-${type} show`;
-  clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),dur);
+
+  if(openDialog){
+    // Use (or create) a dedicated in-dialog toast element
+    let dt=openDialog.querySelector('.dialog-toast');
+    if(!dt){
+      dt=document.createElement('div');
+      dt.className='dialog-toast';
+      openDialog.appendChild(dt);
+    }
+    dt.textContent=msg;
+    dt.className=`dialog-toast toast toast-${type} show`;
+    clearTimeout(dt._t);
+    dt._t=setTimeout(()=>dt.classList.remove('show'),dur);
+  } else {
+    t.textContent=msg; t.className=`toast toast-${type} show`;
+    clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),dur);
+  }
 }
 function confirm(title,msg){ return new Promise(res=>{
   document.getElementById('confirm-title').textContent=title;
@@ -2194,21 +2212,9 @@ function showCatPopover(anchorEvt, context){
   const pop = document.getElementById('cat-edit-popover');
   const bk  = document.getElementById('cat-popover-backdrop');
   bk.style.display = 'block';
-  if(anchorEvt){
-    const margin = 8;
-    const pw = 260, ph = 320;
-    let x = anchorEvt.clientX + margin;
-    let y = anchorEvt.clientY + margin;
-    if(x + pw > window.innerWidth)  x = window.innerWidth - pw - margin;
-    if(y + ph > window.innerHeight) y = window.innerHeight - ph - margin;
-    pop.style.left = x + 'px';
-    pop.style.top  = y + 'px';
-    pop.style.transform = '';
-  } else {
-    pop.style.left = '50%';
-    pop.style.top  = '50%';
-    pop.style.transform = 'translate(-50%,-50%)';
-  }
+  pop.style.left = '50%';
+  pop.style.top  = '50%';
+  pop.style.transform = 'translate(-50%,-50%)';
   if(!pop.open){ pop.showModal(); }
 }
 
