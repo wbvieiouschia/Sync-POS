@@ -52,14 +52,12 @@ function closeModal(id){ if(id==='cat-edit-popover'){ closeCatPopover(); return;
 function showScreen(id){ document.querySelectorAll('.screen').forEach(s=>{s.classList.remove('active');s.style.display='';s.style.opacity='';}); document.getElementById(id).classList.add('active'); }
 function showPage(k){ document.querySelectorAll('.page').forEach(p=>{p.hidden=true;p.classList.remove('active')}); const p=document.querySelector(`.page[data-page="${k}"]`); if(p){p.hidden=false;p.classList.add('active');} document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===k)); }
 function catMatch(p,k){
-  const c=(p.category||'').toLowerCase();
   if(k==='all') return true;
-  if(k==='coffee') return c.includes('coffee')||c.includes('espresso');
-  if(k==='matcha') return c.includes('matcha');
-  if(k==='milktea') return c.includes('milktea')||c.includes('milk tea');
-  if(k==='food') return c.includes('food')||c.includes('pastry')||c.includes('rice');
-  if(k==='premade') return c.includes('pre made')||c.includes('premade');
-  return true;
+  if(k==='premade') return (p.category||'').toLowerCase().includes('pre made')||(p.category||'').toLowerCase().includes('premade');
+  const cats=typeof DB!=='undefined'?DB.get('categories',[]):[];
+  const cat=cats.find(c=>c.key===k);
+  if(cat) return (p.category||'').toLowerCase()===(cat.name||'').toLowerCase()||(p.category||'').toLowerCase()===(cat.key||'').toLowerCase();
+  return false;
 }
 function stockLevel(cur,max){ const p=max>0?(cur/max)*100:0; if(p>=60)return{label:'OK',cls:'level-ok'}; if(p>=25)return{label:'Low',cls:'level-low'}; return{label:'Critical',cls:'level-crit'}; }
 function deductRecipeFromInventory(recipe, multiplier){
@@ -181,6 +179,7 @@ document.getElementById('login-form')?.addEventListener('submit',e=>{
   try { localStorage.setItem('syncpos_session', JSON.stringify({account_id:user.account_id,pin:user.pin})); } catch(_){}
   const _today=todayStr();
   try {
+    DB.push('attendance',{id:DB.uid(),account_id:S.user.account_id,name:S.user.name,date:_today,clock_in:nowTime(),clock_out:null});
     DB.push('system_log',{id:DB.uid(),account_id:S.user.account_id,name:S.user.name,date:_today,sign_in:nowTime(),sign_out:null});
   } catch(_){}
   initPOS();
@@ -255,6 +254,7 @@ OT.reset=()=>{OT.gen();OT.type=null;OT.discType=null;OT.discAmt=0;OT.customs=[];
 OT.totalDisc=()=>OT.discAmt+OT.customs.reduce((s,d)=>s+d.amount,0);
 
 function renderOrderSetup(){
+  renderOrderCatTabs();
   document.getElementById('order-setup').style.display='';
   document.getElementById('order-grid-view').hidden=true;
   document.getElementById('order-panel').hidden=true;
@@ -380,6 +380,13 @@ function getPremadeRemainingQty(p){
   return Math.max(0,(p.batch_qty||0)-alreadyOrdered);
 }
 let _orderPremadeSubCat='all';
+function renderOrderCatTabs(){
+  const cats=DB.get('categories',[]);
+  const container=document.getElementById('order-cat-tabs');
+  container.innerHTML=`<button class="cat-tab active" data-cat="all">All Items</button>`
+    +cats.map(c=>`<button class="cat-tab" data-cat="${c.key}">${c.emoji} ${c.name}</button>`).join('')
+    +`<button class="cat-tab" data-cat="premade">🥤 Pre Made</button>`;
+}
 function renderProductGrid(cat=S.activeCat,search=''){
   const grid=document.getElementById('product-grid'); grid.innerHTML='';
   let filtered=S.products.filter(p=>catMatch(p,cat)&&(!search||p.name.toLowerCase().includes(search.toLowerCase())));
@@ -407,7 +414,6 @@ function renderProductGrid(cat=S.activeCat,search=''){
             : `<span class="pm-order-stock-count">${remaining} left</span>`}
         </span>`;
     } else {
-      // Build price display: show range if any surcharges exist
       const _adds=[parseFloat(p.hot_add)||0,parseFloat(p.iced_add)||0,parseFloat(p.medium_add)||0,parseFloat(p.large_add)||0];
       const _maxAdd=Math.max(..._adds);
       const _priceLabel=_maxAdd>0?`${peso(p.base_price)} <span class="product-price-up">↑ +₱${_maxAdd}</span>`:peso(p.base_price);
@@ -423,7 +429,7 @@ document.getElementById('order-cat-tabs').addEventListener('click',e=>{
   const subBar=document.getElementById('order-premade-sub-tabs');
   if(t.dataset.cat==='premade'){
     _orderPremadeSubCat='all';
-    const subCats=[...new Set(S.products.filter(p=>catMatch(p,'premade')).map(p=>p.pm_subcategory).filter(Boolean))];
+    const _pmAllCats=DB.get('pm_categories',[]); const subCats=_pmAllCats.map(c=>c.key).filter(k=>S.products.filter(p=>catMatch(p,'premade')).some(p=>p.pm_subcategory===k));
     subBar.innerHTML=`<button class="cat-tab active" data-sub="all">All</button>`
       +subCats.map(s=>`<button class="cat-tab" data-sub="${s}">${s}</button>`).join('');
     subBar.style.display='';
@@ -454,8 +460,8 @@ function openVariantPicker(p){
   const ts=document.getElementById('picker-temp-section'), to=document.getElementById('picker-temp-options');
   if(p.has_temperature){
     const temps=p.serving_var==='HOT'?['HOT']:p.serving_var==='ICED'?['ICED']:['HOT','ICED'];
-    to.innerHTML=temps.map(t=>`<label class="picker-chip"><input type="radio" name="temp" value="${t}"/><span>${t==='HOT'?'🔥 Hot':'🧊 Iced'}</span></label>`).join('');
     to.innerHTML=temps.map(t=>{const add=t==='HOT'?(parseFloat(p.hot_add)||0):(parseFloat(p.iced_add)||0);return`<label class="picker-chip"><input type="radio" name="temp" value="${t}" data-add="${add}"/><span>${t==='HOT'?'🔥 Hot':'🧊 Iced'}${add>0?' +₱'+add:''}</span></label>`;}).join('');
+    if(temps.length===1) to.querySelector('input').checked=true;
     ts.hidden=false;
   }else{ts.hidden=true;}
   // Size
@@ -477,11 +483,11 @@ function openVariantPicker(p){
 }
 function getPickerPrice(){
   if(!_pp) return 0;
+  const tempEl=document.querySelector('input[name="temp"]:checked');
+  const tempAdd=tempEl?parseFloat(tempEl.dataset.add)||0:0;
   const sizeEl=document.querySelector('input[name="psize"]:checked');
   const sizeAdd=sizeEl?parseFloat(sizeEl.dataset.add)||0:0;
   const addonToggle=document.getElementById('addon-toggle');
-  const tempEl=document.querySelector('input[name="temp"]:checked');
-  const tempAdd=tempEl?parseFloat(tempEl.dataset.add)||0:0;
   const addonAdd=(addonToggle&&addonToggle.checked)?[...document.querySelectorAll('input[name="addon"]:checked')].reduce((s,el)=>s+(parseFloat(el.dataset.price)||0),0):0;
   return (_pp.base_price||0)+tempAdd+sizeAdd+addonAdd;
 }
@@ -759,7 +765,7 @@ function loadInventory(){
     const pct=s.max_qty>0?Math.round((s.current_qty/s.max_qty)*100):0;
     const lvl=stockLevel(s.current_qty,s.max_qty);
     const ids=(s._ids||[s.id]).join(',');
-    const actions=isAdmin()?`<div class="inv-card-actions"><button class="inv-card-btn-reduce" data-action="reduce" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}" data-unit="${s.unit}">Reduce</button><button class="inv-card-btn-restock" data-action="restock" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}">Restock</button></div><button class="inv-card-btn-remove" data-action="del" data-ids="${ids}" data-name="${s.name}">🗑 Remove Item</button>`:'';
+    const actions=`<div class="inv-card-actions"><button class="inv-card-btn-reduce" data-action="reduce" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}" data-unit="${s.unit}">Reduce</button><button class="inv-card-btn-restock" data-action="restock" data-id="${s._ids[0]}" data-ids="${ids}" data-name="${s.name}">Restock</button></div>${isManager()?`<button class="inv-card-btn-remove" data-action="del" data-ids="${ids}" data-name="${s.name}">🗑 Remove Item</button>`:''}` ;
     return`<div class="inv-card ${lvl.cls}" data-ids="${ids}" data-name="${s.name}" data-unit="${s.unit}" data-cur="${s.current_qty}" data-max="${s.max_qty}"><div class="inv-card-toprow"><span class="inv-card-label">Inventory</span><span class="inv-card-pct">${pct}%</span></div><p class="inv-card-name">${s.name}</p><p class="inv-card-qty">${s.current_qty} ${s.unit} / ${s.max_qty} ${s.unit}</p><div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>${s.expiry_date?`<p class="inv-card-expiry">Exp: ${s.expiry_date}</p>`:''}${actions}</div>`;
   }).join('');
 }
@@ -1841,9 +1847,17 @@ document.getElementById('ms-btn-clockout').addEventListener('click', async () =>
 // ═══════════════════════════════════════════════════
 //  EDIT ITEMS — list view with Edit / Recipe / Delete
 // ═══════════════════════════════════════════════════
+function renderEditCatTabs(){
+  const cats=DB.get('categories',[]);
+  const container=document.getElementById('edit-cat-tabs');
+  container.innerHTML=`<button class="cat-tab${_editCat==='all'?' active':''}" data-cat="all">All</button>`
+    +cats.map(c=>`<button class="cat-tab${_editCat===c.key?' active':''}" data-cat="${c.key}">${c.emoji} ${c.name}</button>`).join('')
+    +`<button class="cat-tab${_editCat==='premade'?' active':''}" data-cat="premade">🥤 Pre Made</button>`;
+}
 let _editCat='all', _editSearch='', _premadeSubCat='all';
 function loadEditItems(cat){
   _editCat=cat||_editCat;
+  renderEditCatTabs();
   S.products=DB.get('products');
   const q=(_editSearch||'').toLowerCase();
   let filtered=S.products.filter(p=>catMatch(p,_editCat)&&(!q||p.name.toLowerCase().includes(q)));
@@ -1861,9 +1875,10 @@ function loadEditItems(cat){
         <span class="edit-item-meta">${p.category} · ₱${Number(p.base_price||0).toFixed(2)}</span>
       </div>
       <div class="edit-item-actions">
-        <button class="btn btn-primary btn-sm ei-edit" data-id="${p.id}">✏️ Edit</button>
-        <button class="btn btn-outline btn-sm ei-recipe" data-id="${p.id}">📋 Recipe</button>
-        <button class="btn-danger-small ei-del" data-id="${p.id}" data-name="${p.name}">Delete</button>
+        ${isManager()?`<button class="btn btn-primary btn-sm ei-edit" data-id="${p.id}">✏️ Edit</button>`:''}
+        ${isManager()?`<button class="btn btn-outline btn-sm ei-recipe" data-id="${p.id}">📋 Recipe</button>`:''}
+        ${isManager()?`<button class="btn-danger-small ei-del" data-id="${p.id}" data-name="${p.name}">Delete</button>`:''}
+        ${!isManager()?`<span class="edit-item-viewonly-badge">View Only</span>`:''}
       </div>
     </div>`).join('')
     +'<p class="edit-item-hint">Double-click or right-click a row to edit</p>';
@@ -1891,7 +1906,7 @@ document.getElementById('edit-cat-tabs').addEventListener('click',e=>{
     _premadeSubCat='all';
     // Build sub-tabs from unique pm_subcategory values in premade products
     const prods=DB.get('products').filter(p=>catMatch(p,'premade'));
-    const subCats=[...new Set(prods.map(p=>p.pm_subcategory).filter(Boolean))];
+    const subCats=DB.get('pm_categories',[]).map(c=>c.key).filter(k=>prods.some(p=>p.pm_subcategory===k));
     subBar.innerHTML=`<button class="cat-tab active" data-sub="all">All</button>`
       +subCats.map(s=>`<button class="cat-tab" data-sub="${s}">${s}</button>`).join('');
     subBar.style.display='';
@@ -2261,7 +2276,7 @@ function loadPremade(){
 document.getElementById('btn-add-premade').addEventListener('click',()=>{ pmReset(); pmPopulateIngredients(); openModal('modal-add-premade'); });
 const PM={cat:'Coffee & Espresso',storage:'fresh',recipe:[]};
 function pmReset(){
-  PM.cat='Coffee & Espresso'; PM.storage='fresh'; PM.recipe=[];
+  const _pmCats=DB.get('pm_categories',[]); PM.cat=_pmCats.length?_pmCats[0].key:''; PM.storage='fresh'; PM.recipe=[];
   document.getElementById('pm-item-name').value=''; document.getElementById('pm-price').value='0'; document.getElementById('pm-qty').value='1';
   renderPmCatTiles(); updatePmStorage(); pmRenderRecipe();
 }
@@ -2270,7 +2285,7 @@ document.getElementById('pm-cat-tiles').addEventListener('click',e=>{
   PM.cat=t.dataset.cat; updatePmCatTiles();
 });
 function renderPmCatTiles(){
-  const cats=DB.get('categories',[]);
+  const cats=DB.get('pm_categories',[]);
   const container=document.getElementById('pm-cat-tiles');
   container.innerHTML=cats.map(c=>`<button type="button" class="npm-cat-tile${PM.cat===c.key?' active':''}" data-cat="${c.key}" data-cat-id="${c.id}"><span class="npm-tile-icon">${c.emoji}</span><span class="npm-tile-name">${c.name}</span></button>`).join('')
     +`<button type="button" class="npm-cat-tile npm-cat-tile-add" id="pm-btn-add-cat">＋ New</button>`;
@@ -2423,7 +2438,8 @@ function openAddCategoryDialog(context){
 }
 
 function openEditCategoryPopover(catId, anchorEvt, context){
-  const cats = DB.get('categories',[]);
+  const dbKey = context==='pm' ? 'pm_categories' : 'categories';
+  const cats = DB.get(dbKey,[]);
   const cat = cats.find(c=>c.id===catId); if(!cat) return;
   _catEditorState = {id:catId, context};
   document.getElementById('cat-edit-name').value = cat.name;
@@ -2489,16 +2505,15 @@ document.getElementById('cat-popover-save').addEventListener('click',()=>{
   const name = document.getElementById('cat-edit-name').value.trim();
   if(!name){showToast('Category name required.','error');return;}
   const emoji = getSelectedEmoji();
-  let cats = DB.get('categories',[]);
+  const dbKey = _catEditorState.context==='pm' ? 'pm_categories' : 'categories';
+  let cats = DB.get(dbKey,[]);
   if(_catEditorState.id){
-    // Edit existing
     const cat = cats.find(c=>c.id===_catEditorState.id);
     if(cat){ cat.name=name; cat.emoji=emoji; }
   } else {
-    // Add new — key = name (used to match products)
     cats.push({id:DB.uid(), name, emoji, key:name});
   }
-  DB.set('categories', cats);
+  DB.set(dbKey, cats);
   closeCatPopover();
   refreshBothCatTiles();
   showToast(_catEditorState.id ? 'Category updated.' : 'Category added.','success');
@@ -2507,9 +2522,10 @@ document.getElementById('cat-popover-save').addEventListener('click',()=>{
 document.getElementById('cat-popover-del').addEventListener('click',async()=>{
   if(!_catEditorState.id) return;
   if(!await confirm('Delete Category','Delete this category? Products using it will keep their category label.')) return;
-  let cats = DB.get('categories',[]);
+  const dbKey = _catEditorState.context==='pm' ? 'pm_categories' : 'categories';
+  let cats = DB.get(dbKey,[]);
   cats = cats.filter(c=>c.id!==_catEditorState.id);
-  DB.set('categories', cats);
+  DB.set(dbKey, cats);
   closeCatPopover();
   refreshBothCatTiles();
   showToast('Category deleted.','success');
