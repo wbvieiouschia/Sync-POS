@@ -1,895 +1,228 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>26th² Café · SYNC POS</title>
-<link rel="icon" href="logo.png">
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&display=swap" rel="stylesheet"/>
+// ═══════════════════════════════════════════════════════════════
+//  firebase-db.js  —  Firestore backend for SYNC POS
+//  Drop-in replacement for the localStorage DB in app.js.
+//  Exposes the same window.DB API so the rest of app.js is untouched.
+// ═══════════════════════════════════════════════════════════════
+"use strict";
 
-<link rel="stylesheet" href="styles.css?v=2"/>
-<style>
-/* ── Step Indicator (inlined to fix deploy cache) ── */
-.login-steps-indicator{display:flex;align-items:center;gap:0;margin-bottom:22px;width:100%}
-.login-step-item{display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0}
-.step-circle{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;border:2px solid #c4ccaa;background:#f4f7ee;color:#748a52;transition:all .25s}
-.step-circle.active{background:#4a6228;border-color:#4a6228;color:#fff;box-shadow:0 2px 10px rgba(74,98,40,.35)}
-.step-circle.done{background:#6a8a30;border-color:#6a8a30;color:#fff}
-.step-label-text{font-size:.65rem;font-weight:600;color:#748a52;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap}
-.login-step-item:has(.step-circle.active) .step-label-text,
-.login-step-item:has(.step-circle.done) .step-label-text{color:#4a6228}
-.step-connector{flex:1;height:2px;background:#c4ccaa;margin:0 8px;margin-bottom:18px;border-radius:2px;transition:background .25s}
-.step-connector.active{background:#4a6228}
-</style>
-</head>
-<body>
-<!-- ═══════════════════════ LOGIN ═══════════════════════ -->
-<div id="screen-login" class="screen active">
-  <div class="login-split">
-    <div class="login-left">
-      <div class="login-left-brand"><span class="login-left-logo">☕</span><span>26th² Cafe</span></div>
-      <div class="login-left-body">
-        <h1 class="login-left-title">Welcome back<br>to the shift!</h1>
-        <p class="login-left-sub">Manage orders, update inventory, and serve happiness — one cup at a time.</p>
-      </div>
-      <div class="login-shift-badge">
-        <div class="shift-badge-icon">🕐</div>
-        <div><div class="shift-badge-label">Current Shift</div><div class="shift-badge-time" id="login-shift-time"></div></div>
-      </div>
-    </div>
-    <div class="login-right">
-      <div class="login-right-inner">
-        <h2 class="login-form-title">SYNC Login</h2>
-        <p class="login-form-desc">Please enter your credentials to access the POS.</p>
+(function () {
+  // ── Firebase config ──────────────────────────────────────────
+  const firebaseConfig = {
+    apiKey: "AIzaSyDYCSqXghqZyyy07v5ayOydKD0MFX5dBjs",
+    authDomain: "sync-pos.firebaseapp.com",
+    projectId: "sync-pos",
+    storageBucket: "sync-pos.firebasestorage.app",
+    messagingSenderId: "377262643586",
+    appId: "1:377262643586:web:b73bd8b8580a64a1dad79b",
+    measurementId: "G-C9CYVSLBL3",
+  };
 
-        <form id="login-form" class="login-form" novalidate>
-          <div class="login-role-toggle" style="margin-bottom:16px">
-            <button type="button" class="role-tab active" data-role="admin">ADMIN</button>
-            <button type="button" class="role-tab" data-role="staff">STAFF</button>
-          </div>
-          <div class="field-group">
-            <label class="field-label" for="account-id">Account ID</label>
-            <div class="field-wrap"><span class="field-icon">👤</span><input id="account-id" class="field-input" type="text" placeholder="MGR-0001" autocomplete="off"/></div>
-          </div>
-          <div class="field-group">
-            <label class="field-label" for="pin">Access PIN</label>
-            <div class="field-wrap"><span class="field-icon">🔒</span><input id="pin" class="field-input" type="password" placeholder="••••••" maxlength="6" inputmode="numeric"/></div>
-          </div>
-          <p id="login-error" class="login-error" hidden>⚠️ Invalid Account ID or PIN. Please try again.</p>
-          <a href="#" class="login-forgot" onclick="showForgotHint(event)">Forgot PIN?</a>
-          <button type="submit" class="btn-login-submit">Clock in &nbsp;→</button>
-          <p class="login-authorized">Authorized Personnel Only</p>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
+  // ── Init Firebase ────────────────────────────────────────────
+  if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
 
-<!-- ═══════════════════════ POS ═══════════════════════ -->
-<div id="screen-pos" class="screen">
-  <aside class="sidebar">
-    <div class="sidebar-brand">
-      <span class="sidebar-logo">☕</span>
-      <div><div class="sidebar-brand-name">26th² Café</div><div class="sidebar-brand-sub">SYNC POS</div></div>
-    </div>
-    <div class="sidebar-staff">
-      <div class="staff-avatar">👤</div>
-      <div class="staff-info"><div class="staff-name" id="staff-name">—</div><div class="staff-role" id="staff-role">—</div></div>
-    </div>
-    <nav class="sidebar-nav">
-      <p class="nav-section">Operations</p>
-      <button class="nav-item active" data-page="order"><span class="nav-icon">🛒</span><span class="nav-label">Order</span></button>
-      <button class="nav-item admin-only" data-page="edit-items"><span class="nav-icon">✏️</span><span class="nav-label">Edit Items</span></button>
-      <button class="nav-item" data-page="premade-stock"><span class="nav-icon">📋</span><span class="nav-label">Pre-Made Stock</span></button>
-      <button class="nav-item" data-page="inventory"><span class="nav-icon">📦</span><span class="nav-label">Inventory</span></button>
-      <button class="nav-item" data-page="stocks"><span class="nav-icon">🟠</span><span class="nav-label">Stocks</span></button>
-      <button class="nav-item" data-page="waste"><span class="nav-icon">🗑️</span><span class="nav-label">Waste Tracker</span></button>
-      <p class="nav-section">Management</p>
-      <button class="nav-item" data-page="sales"><span class="nav-icon">📊</span><span class="nav-label">Sales</span></button>
-      <button class="nav-item" data-page="sales-performance"><span class="nav-icon">🏆</span><span class="nav-label">Sales Records</span></button>
-      <button class="nav-item" data-page="expenses"><span class="nav-icon">💸</span><span class="nav-label">Expenses</span></button>
-      <button class="nav-item" data-page="attendance"><span class="nav-icon">📅</span><span class="nav-label">Attendance</span></button>
-      <p class="nav-section">System</p>
-      <button class="nav-item admin-only" data-page="register"><span class="nav-icon">📋</span><span class="nav-label">Register Staff</span></button>
-      <button class="nav-item admin-only" data-page="manage-staff"><span class="nav-icon">👥</span><span class="nav-label">Manage Staff</span></button>
-      <button class="nav-item" data-page="profile"><span class="nav-icon">🙋</span><span class="nav-label">My Profile</span></button>
-    </nav>
-    <div class="sidebar-footer">
-      <button class="btn-outline-small" id="btn-clock-out">Clock Out</button>
-      <button class="btn-success-small" id="btn-sign-in">Clock In</button>
-    </div>
-  </aside>
+  // ── Tables that hold arrays of documents (sub-collections) ───
+  const ARRAY_TABLES = new Set([
+    "users","products","addons","inventory","premade_stock",
+    "orders","waste","expenses","attendance","system_log",
+  ]);
 
-  <main class="main-content">
+  // ── In-memory cache (filled by preload) ─────────────────────
+  const _cache = {};
+  let _cacheReady = false;
 
-    <!-- ORDER -->
-    <section id="page-order" class="page active" data-page="order">
-      <div id="order-setup" class="order-setup-v2">
-        <div><h2 class="ot-page-title">Order Tab</h2></div>
-        <div class="ot-card">
-          <div class="ot-info-row"><span class="ot-info-label">ORDER CODE</span><span class="ot-info-divider"></span><span class="ot-info-value ot-code" id="ot-code-alpha">——</span></div>
-          <div class="ot-info-row"><span class="ot-info-label">ORDER CODE</span><span class="ot-info-divider"></span><span class="ot-info-value ot-code" id="ot-code-num">——</span></div>
-          <div class="ot-info-row"><span class="ot-info-label">ORDER QUEUE</span><span class="ot-info-divider"></span><span class="ot-info-value ot-code" id="ot-queue">——</span></div>
-          <div class="ot-info-row"><span class="ot-info-label">CASHIER</span><span class="ot-info-divider"></span><span class="ot-info-value" id="ot-cashier">—</span></div>
-          <div class="ot-discount-section">
-            <p class="ot-discount-title">DISCOUNT OFFER / PRODUCT SALE</p>
-            <div class="ot-discount-tiles">
-              <button class="ot-disc-tile" id="disc-senior" data-type="senior"><span class="ot-disc-name">Senior Citizen</span><span class="ot-disc-amt" id="disc-senior-amt">20.00</span></button>
-              <button class="ot-disc-tile" id="disc-pwd" data-type="pwd"><span class="ot-disc-name">PWD</span><span class="ot-disc-amt" id="disc-pwd-amt">20.00</span></button>
-              <div id="ot-custom-disc-tiles"></div>
-              <button class="ot-disc-add admin-only" id="btn-add-discount">+ Add Discount</button>
-            </div>
-            <div class="ot-custom-disc-input" id="ot-custom-disc-input" hidden>
-              <label class="field-label" for="custom-disc-amount">Discount Amount (₱)</label>
-              <div class="field-wrap" style="max-width:260px"><span class="field-icon">₱</span><input id="custom-disc-amount" class="field-input" type="number" placeholder="0.00" min="0" step="0.01"/></div>
-              <div style="display:flex;gap:8px;margin-top:8px">
-                <input id="custom-disc-label" class="field-input" type="text" placeholder="Label (e.g. Christmas)" style="max-width:220px"/>
-                <button class="btn btn-primary btn-sm" id="btn-save-custom-disc">Apply</button>
-                <button class="btn btn-outline btn-sm" id="btn-cancel-custom-disc">Cancel</button>
-              </div>
-            </div>
-          </div>
-          <div class="ot-type-section">
-            <button class="ot-type-btn" id="ot-type-dine" data-type="dine_in">Dine<br>in</button>
-            <button class="ot-type-btn" id="ot-type-take" data-type="takeout">Take<br>out</button>
-            <button class="ot-type-btn" id="ot-type-online" data-type="online">Online<br>order</button>
-          </div>
-        </div>
-        <button class="ot-start-btn" id="btn-start-order">START ORDER</button>
-      </div>
-      <div id="order-grid-view" hidden>
-        <div class="category-tabs" id="order-cat-tabs">
-          <button class="cat-tab active" data-cat="all">All Items</button>
-          <button class="cat-tab" data-cat="coffee">☕ Coffee &amp; Espresso</button>
-          <button class="cat-tab" data-cat="matcha">🍵 Specialty Matcha</button>
-          <button class="cat-tab" data-cat="milktea">🧋 Milktea</button>
-          <button class="cat-tab" data-cat="food">🍽️ Food</button>
-          <button class="cat-tab" data-cat="premade">🥤 Pre Made</button>
-        </div>
-        <div class="category-tabs" id="order-premade-sub-tabs" style="display:none;margin-top:-8px;padding-top:6px;border-top:1px dashed var(--border)"></div>
-        <div class="search-bar">
-          <span class="search-icon">🔍</span>
-          <input id="product-search" class="field-input search-input" type="text" placeholder="Search products…" autocomplete="off"/>
-        </div>
-        <div id="product-grid" class="product-grid"></div>
-      </div>
-    </section>
+  // ── Helpers ───────────────────────────────────────────────────
+  function colRef(table) { return db.collection(table); }
 
-    <!-- INVENTORY -->
-    <section id="page-inventory" class="page" data-page="inventory" hidden>
-      <div class="inv-page-header">
-        <div><h2 class="page-title">Stock Inventory</h2><p style="font-size:.78rem;color:var(--text-muted)">Real-time supply tracking.</p></div>
-        <div class="inv-header-right">
-          <div class="inv-search-wrap"><span class="inv-search-icon">🔍</span><input id="inv-search" class="inv-search-input" type="text" placeholder="Search stocks…"/></div>
-          <button class="inv-add-btn" id="btn-add-stock">+ Add Stock</button>
-        </div>
-      </div>
-      <div id="inventory-grid" class="inventory-grid"></div>
-    </section>
+  function docRef(table, key) { return db.collection("kv").doc(table + ":" + key); }
 
-    <!-- STOCKS -->
-    <section id="page-stocks" class="page" data-page="stocks" hidden>
-      <div class="page-header"><h2 class="page-title">Stocks</h2><button class="btn btn-primary btn-sm" id="btn-add-stock-2">+ Add Stock</button></div>
-      <div class="table-card"><table class="data-table" id="stocks-table"><thead><tr><th>ITEM</th><th>CURRENT QTY</th><th>MAX QTY</th><th>UNIT</th><th>EXPIRY DATE</th><th>STATUS</th></tr></thead><tbody id="stocks-tbody"></tbody></table></div>
-      <div id="expiring-soon-section" hidden>
-        <div class="page-header" style="margin-top:28px"><h3 id="expiring-soon-title" class="page-title" style="font-size:1.1rem;color:#c0392b">⚠️ <span>Expiring Soon</span></h3></div>
-        <div class="table-card"><table class="data-table"><thead><tr><th>ITEM</th><th>CURRENT QTY</th><th>UNIT</th><th>EXPIRY DATE</th><th>DAYS LEFT</th><th>ACTION</th></tr></thead><tbody id="expiring-soon-tbody"></tbody></table></div>
-      </div>
-    </section>
+  function uid() {
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => {
+      const r = (Math.random() * 16) | 0;
+      return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+    });
+  }
 
+  // Snapshot → plain JS array
+  function snapToArray(snap) {
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
 
-    <!-- WASTE -->
-    <section id="page-waste" class="page" data-page="waste" hidden>
-      <div class="page-header"><h2 class="page-title">Waste Log</h2><button class="btn btn-primary btn-sm" id="btn-log-waste">+ Log Waste</button></div>
-      <div class="table-card"><table class="data-table"><thead><tr><th>Item</th><th>Qty</th><th>Unit</th><th>Reason</th><th>Logged At</th></tr></thead><tbody id="waste-tbody"></tbody></table></div>
-    </section>
+  // ── preload: fetch all array tables into cache at startup ────
+  async function preload() {
+    const fetches = [...ARRAY_TABLES].map(async table => {
+      const snap = await colRef(table).get();
+      _cache[table] = snapToArray(snap);
+    });
+    // Also fetch scalar KV docs (categories, disc_senior, disc_pwd, etc.)
+    const kvFetch = db.collection("kv").get().then(snap => {
+      snap.docs.forEach(d => {
+        _cache["kv:" + d.id] = d.data().value;
+      });
+    });
+    await Promise.all([...fetches, kvFetch]);
+    _cacheReady = true;
 
-    <!-- SALES -->
-    <section id="page-sales" class="page" data-page="sales" hidden>
-      <div class="page-header"><h2 class="page-title">Sales</h2></div>
-      <div class="summary-cards">
-        <div class="summary-card"><p class="summary-label">Today's Revenue</p><p class="summary-value" id="sales-today">₱ 0.00</p></div>
-        <div class="summary-card"><p class="summary-label">Total Orders</p><p class="summary-value" id="sales-count">0</p></div>
-        <div class="summary-card"><p class="summary-label">Avg. Order</p><p class="summary-value" id="sales-avg">₱ 0.00</p></div>
-      </div>
-      <div class="table-card"><table class="data-table"><thead><tr><th>Order ID</th><th>Total</th><th>Cash</th><th>Change</th><th>Cashier</th><th>Date &amp; Time</th></tr></thead><tbody id="sales-tbody"></tbody></table></div>
-    </section>
+    // Live listeners: keep cache in sync across devices
+    ARRAY_TABLES.forEach(table => {
+      colRef(table).onSnapshot(snap => {
+        _cache[table] = snapToArray(snap);
+        // Trigger re-render for key pages
+        _notifyChange(table);
+      });
+    });
 
-    <!-- INDIVIDUAL SALES PERFORMANCE -->
-    <section id="page-sales-performance" class="page" data-page="sales-performance" hidden>
-      <div class="page-header">
-        <div>
-          <h2 class="page-title">Individual Sales Performance</h2>
-          <p style="font-size:.82rem;color:var(--text-muted);margin:-8px 0 0">Today's revenue breakdown by employee.</p>
-        </div>
-        <div style="position:relative">
-          <button class="btn btn-outline btn-sm isp-period-btn" id="isp-period-btn">
-            <span id="isp-period-label">Total Daily Sales</span> ▾
-          </button>
-          <div class="isp-dropdown" id="isp-dropdown" hidden>
-            <button class="isp-dd-item active" data-period="daily">Total Daily Sales</button>
-            <button class="isp-dd-item" data-period="weekly">Total Weekly Sales</button>
-            <button class="isp-dd-item" data-period="monthly">Total Monthly Sales</button>
-            <button class="isp-dd-item" data-period="yearly">Total Yearly Sales</button>
-          </div>
-        </div>
-      </div>
-      <div id="isp-employee-list" style="display:flex;flex-direction:column;gap:10px"></div>
-      <div class="isp-total-bar">
-        <span>Grand Total</span>
-        <span id="isp-grand-total">₱ 0.00</span>
-      </div>
-    </section>
+    // Live listener for scalar KV collection
+    db.collection("kv").onSnapshot(snap => {
+      snap.docs.forEach(d => {
+        _cache["kv:" + d.id] = d.data().value;
+      });
+    });
+  }
 
-    <!-- EXPENSES -->
-    <!-- FINANCIAL & EXPENSES RECORD -->
-    <section id="page-expenses" class="page" data-page="expenses" hidden>
-      <!-- Page Header -->
-      <div class="fer-header">
-        <div>
-          <h2 class="fer-title">Financial &amp; Expenses Record</h2>
-          <p class="fer-subtitle">Track restocking costs, price fluctuations, and operational overhead</p>
-        </div>
-        <div class="fer-view-dropdown" id="fer-view-dropdown">
-          <button class="fer-view-btn" id="fer-view-btn">
-            <span id="fer-view-label">Overview</span>
-            <span class="fer-view-arrow">▼</span>
-          </button>
-          <div class="fer-view-menu" id="fer-view-menu" hidden>
-            <button class="fer-view-item active" data-view="overview">Overview</button>
-            <button class="fer-view-item" data-view="procurement">Procurement</button>
-            <button class="fer-view-item" data-view="operational">Operational</button>
-          </div>
-        </div>
-      </div>
+  // ── Change notification ──────────────────────────────────────
+  // Any part of the app can subscribe via DB.onChange(table, fn)
+  const _listeners = {};
+  function _notifyChange(table) {
+    (_listeners[table] || []).forEach(fn => {
+      try { fn(_cache[table]); } catch (e) { console.error(e); }
+    });
+    (_listeners["*"] || []).forEach(fn => {
+      try { fn(table, _cache[table]); } catch (e) { console.error(e); }
+    });
+  }
 
-      <!-- OVERVIEW VIEW -->
-      <div id="fer-view-overview" class="fer-view">
-        <!-- Summary Cards -->
-        <div class="fer-stats-row">
-          <div class="fer-stat-card">
-            <div class="fer-stat-label">TOTAL MTD EXPENSES</div>
-            <div class="fer-stat-value" id="fer-mtd-total">₱ 0.00</div>
-            <div class="fer-stat-sub">Month-to-Date</div>
-          </div>
-          <div class="fer-stat-card">
-            <div class="fer-stat-label">INVENTORY RESTOCKING</div>
-            <div class="fer-stat-value" id="fer-inv-total">₱ 0.00</div>
-            <div class="fer-stat-sub" id="fer-inv-sub">0 Active POs</div>
-          </div>
-          <div class="fer-stat-card">
-            <div class="fer-stat-label">OPERATIONAL OVERHEAD</div>
-            <div class="fer-stat-value" id="fer-op-total">₱ 0.00</div>
-            <div class="fer-stat-sub">Fixed &amp; Variables</div>
-          </div>
-          <div class="fer-stat-card">
-            <div class="fer-stat-label">WASTE/SPOILAGE LOSS</div>
-            <div class="fer-stat-value" id="fer-waste-total">₱ 0.00</div>
-            <div class="fer-stat-sub" id="fer-waste-sub">No waste logged</div>
-          </div>
-        </div>
+  // ══════════════════════════════════════════════════════════════
+  //  PUBLIC DB API  (mirrors the original localStorage API)
+  // ══════════════════════════════════════════════════════════════
+  window.DB = {
 
-        <!-- Ingredient Price Table -->
-        <div class="fer-section-card">
-          <table class="fer-table">
-            <thead>
-              <tr>
-                <th>INGREDIENTS/MATERIAL</th>
-                <th>SUPPLIER</th>
-                <th>PREVIOUS PRICE</th>
-                <th>LATEST RESTOCK</th>
-                <th>PRICE CHANGE</th>
-              </tr>
-            </thead>
-            <tbody id="fer-price-tbody">
-              <tr><td colspan="5" class="fer-empty">No ingredient price data yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
+    // ── uid ──────────────────────────────────────────────────────
+    uid,
 
-        <!-- Recent Inventory Restocks -->
-        <div class="fer-section-card" style="margin-top:16px">
-          <div class="fer-section-title"><span>🧡</span> Recent Inventory Restocks</div>
-          <table class="fer-table">
-            <thead>
-              <tr>
-                <th>INGREDIENTS/MATERIAL</th>
-                <th>PO</th>
-                <th>DATE</th>
-                <th>PRICE &amp; QUANTITY</th>
-              </tr>
-            </thead>
-            <tbody id="fer-restocks-tbody">
-              <tr><td colspan="4" class="fer-empty">No restocks logged yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+    // ── get (sync, uses cache) ───────────────────────────────────
+    get(key, def) {
+      if (ARRAY_TABLES.has(key)) {
+        return _cache[key] !== undefined ? [..._cache[key]] : (def !== undefined ? def : []);
+      }
+      // Scalar: return from cache if preloaded, else def
+      return _cache["kv:" + key] !== undefined ? _cache["kv:" + key] : (def !== undefined ? def : null);
+    },
 
-      <!-- PROCUREMENT VIEW -->
-      <div id="fer-view-procurement" class="fer-view" hidden>
-        <div class="fer-section-card">
-          <div class="fer-section-title"><span>🧡</span> Recent Inventory Restocks</div>
-          <table class="fer-table">
-            <thead>
-              <tr>
-                <th>INGREDIENTS/MATERIAL</th>
-                <th>PO</th>
-                <th>DATE</th>
-                <th>PRICE &amp; QUANTITY</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="fer-proc-tbody">
-              <tr><td colspan="5" class="fer-empty">No restocks logged yet.</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <button class="fer-add-btn admin-only" id="btn-add-procurement">+ Add Procurement Entry</button>
-        <div id="fer-proc-viewonly-notice" class="fer-viewonly-notice" hidden>🔒 View-only — only admins can add procurement entries.</div>
-      </div>
+    // ── set (async write; also updates cache) ───────────────────
+    set(key, val) {
+      if (ARRAY_TABLES.has(key)) {
+        console.error(`DB.set('${key}') — use DB.push/update/remove for array tables`);
+        return;
+      }
+      _cache["kv:" + key] = val;
+      // Persist to Firestore KV collection
+      db.collection("kv").doc(key).set({ value: val })
+        .catch(e => console.error("DB.set Firestore error:", e));
+    },
 
-      <!-- OPERATIONAL VIEW -->
-      <div id="fer-view-operational" class="fer-view" hidden>
-        <div class="fer-section-card">
-          <div class="fer-op-total-label"><span>⚙️</span> Total Operations Cost</div>
-          <div class="fer-op-total-value" id="fer-op-cost-display">₱ 0.00</div>
-          <div class="fer-op-entries" id="fer-op-entries"></div>
-          <button class="fer-add-btn admin-only" id="btn-add-custom-expense" style="margin-top:8px">+ Add Custom Expense</button>
-          <div id="fer-op-viewonly-notice" class="fer-viewonly-notice" hidden>🔒 View-only — only admins can add custom expenses.</div>
-        </div>
-      </div>
-    </section>
+    // ── push (add row to array table) ────────────────────────────
+    push(table, row) {
+      if (!ARRAY_TABLES.has(table)) {
+        console.error(`DB.push: '${table}' is not an array table`);
+        return row;
+      }
+      const saved = { id: row.id || uid(), ...row };
+      // Optimistic cache update
+      if (!_cache[table]) _cache[table] = [];
+      _cache[table] = [..._cache[table], saved];
+      // Persist
+      colRef(table).doc(saved.id).set(saved)
+        .catch(e => console.error(`DB.push '${table}' error:`, e));
+      return saved;
+    },
 
-    <!-- ATTENDANCE -->
-    <section id="page-attendance" class="page" data-page="attendance" hidden>
-      <div class="page-header">
-        <h2 class="page-title">Attendance</h2>
-        <div class="att-view-dropdown" id="att-view-dropdown">
-          <button class="att-view-btn" id="att-view-btn">
-            <span id="att-view-label">📋 Attendance</span>
-            <span class="att-view-arrow">▼</span>
-          </button>
-          <div class="att-view-menu" id="att-view-menu" hidden>
-            <button class="att-view-item active" data-attview="attendance">📋 Attendance</button>
-            <button class="att-view-item" data-attview="syslog">🔐 System Log</button>
-          </div>
-        </div>
-      </div>
+    // ── update (patch a row by id) ───────────────────────────────
+    update(table, id, patch) {
+      if (!ARRAY_TABLES.has(table)) {
+        console.error(`DB.update: '${table}' is not an array table`);
+        return null;
+      }
+      const rows = _cache[table] || [];
+      const idx = rows.findIndex(r => r.id === id);
+      if (idx === -1) {
+        console.warn(`DB.update: id '${id}' not found in '${table}'`);
+        return null;
+      }
+      const updated = { ...rows[idx], ...patch };
+      _cache[table] = [...rows.slice(0, idx), updated, ...rows.slice(idx + 1)];
+      // Persist
+      colRef(table).doc(id).update(patch)
+        .catch(e => console.error(`DB.update '${table}' error:`, e));
+      return updated;
+    },
 
-      <!-- Attendance Table (Clock In / Clock Out) -->
-      <div id="att-panel-attendance">
-        <div class="table-card">
-          <table class="data-table">
-            <thead><tr><th>Staff</th><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
-            <tbody id="attendance-tbody"></tbody>
-          </table>
-        </div>
-      </div>
+    // ── remove (delete a row by id) ──────────────────────────────
+    remove(table, id) {
+      if (!ARRAY_TABLES.has(table)) return;
+      _cache[table] = (_cache[table] || []).filter(r => r.id !== id);
+      colRef(table).doc(id).delete()
+        .catch(e => console.error(`DB.remove '${table}' error:`, e));
+    },
 
-      <!-- System Log Table (Sign In / Sign Out) -->
-      <div id="att-panel-syslog" hidden>
-        <div class="table-card">
-          <table class="data-table">
-            <thead><tr><th>Staff</th><th>Date</th><th>Sign In</th><th>Sign Out</th><th>Hours</th></tr></thead>
-            <tbody id="syslog-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
+    // ── preload ──────────────────────────────────────────────────
+    async preload() {
+      await preload();
+    },
 
-    <!-- REGISTER -->
-    <section id="page-register" class="page" data-page="register" hidden>
-      <div class="page-header">
-        <h2 class="page-title">Register New Staff</h2>
-        <p style="font-size:.82rem;color:var(--text-muted);margin-top:2px">Generate unique IDs and set initial security credentials.</p>
-      </div>
-      <div class="form-card reg-staff-card">
-        <!-- Full Name -->
-        <div class="field-group">
-          <label class="field-label" for="reg-name">Full Name</label>
-          <input id="reg-name" class="field-input reg-name-input" type="text" placeholder="John Doe"/>
-        </div>
+    // ── invalidate (force re-fetch a table) ──────────────────────
+    async invalidate(table) {
+      if (!table || !ARRAY_TABLES.has(table)) return;
+      const snap = await colRef(table).get();
+      _cache[table] = snapToArray(snap);
+    },
 
-        <!-- Role Type + System ID row -->
-        <div class="reg-role-id-row">
-          <div class="field-group reg-role-group">
-            <label class="field-label">Role  Type</label>
-            <div class="reg-role-dropdown-wrap" id="reg-role-dropdown-wrap">
-              <input id="reg-role-display" class="field-input reg-role-display" type="text" placeholder="Select role…" readonly/>
-              <ul class="reg-role-options" id="reg-role-options">
-                <li data-role="barista">Barista</li>
-                <li data-role="manager">Manager</li>
-                <li data-role="employee">Other</li>
-              </ul>
-            </div>
-          </div>
-          <div class="field-group reg-sysid-group">
-            <label class="field-label">System ID</label>
-            <div class="reg-sysid-row">
-              <input id="reg-system-id" class="field-input reg-sysid-input" type="text" placeholder="—" readonly/>
-              <button type="button" class="reg-sysid-regen" id="btn-regen-id" title="Regenerate ID">↩<span style="font-size:.6rem;display:block;line-height:1">END</span></button>
-            </div>
-          </div>
-        </div>
+    // ── onChange: subscribe to live updates ──────────────────────
+    // Usage: DB.onChange('orders', rows => renderOrders(rows))
+    //        DB.onChange('*',  (table, rows) => console.log(table, rows))
+    onChange(table, fn) {
+      if (!_listeners[table]) _listeners[table] = [];
+      _listeners[table].push(fn);
+    },
 
-        <!-- Manager-only: Email -->
-        <div class="field-group reg-extra-field" id="reg-email-group" hidden>
-          <label class="field-label" for="reg-email">Email Address</label>
-          <input id="reg-email" class="field-input" type="email" placeholder="jochynluisbon@gmail.com"/>
-        </div>
+    // ── exportAll / importAll / clearAll ─────────────────────────
+    async exportAll() {
+      const out = {};
+      for (const table of ARRAY_TABLES) {
+        out[table] = await colRef(table).get().then(snapToArray);
+      }
+      return out;
+    },
 
-        <!-- Employee-only: Employee Type -->
-        <div class="field-group reg-extra-field" id="reg-emptype-group" hidden>
-          <label class="field-label" for="reg-emp-type">Employee Type</label>
-          <input id="reg-emp-type" class="field-input" type="text" placeholder="Intern"/>
-        </div>
+    async importAll(data, { merge = false } = {}) {
+      const batch = db.batch();
+      for (const [table, rows] of Object.entries(data)) {
+        if (!ARRAY_TABLES.has(table)) continue;
+        if (merge) {
+          const existing = new Set((_cache[table] || []).map(r => r.id));
+          rows.forEach(row => {
+            if (!existing.has(row.id)) batch.set(colRef(table).doc(row.id), row);
+          });
+        } else {
+          rows.forEach(row => batch.set(colRef(table).doc(row.id), row));
+        }
+      }
+      await batch.commit();
+      await preload();
+    },
 
-        <!-- PIN -->
-        <div class="field-group" id="reg-pin-group" style="display:none">
-          <label class="field-label" for="reg-pin">Set Access PIN</label>
-          <input id="reg-pin" class="field-input reg-pin-input" type="password" placeholder="1234" maxlength="6" inputmode="numeric"/>
-        </div>
+    async clearAll() {
+      for (const table of ARRAY_TABLES) {
+        const snap = await colRef(table).get();
+        const batch = db.batch();
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+        _cache[table] = [];
+      }
+    },
 
-        <button class="btn btn-primary reg-submit-btn" id="btn-register-staff">Create Account</button>
-        <p id="reg-result" style="font-size:.82rem;color:var(--green);margin-top:-4px"></p>
-      </div>
-    </section>
+    // ── isReady ──────────────────────────────────────────────────
+    isReady() { return _cacheReady; },
+  };
 
-    <!-- MANAGE STAFF -->
-    <section id="page-manage-staff" class="page" data-page="manage-staff" hidden>
-      <div class="ms-page-header">
-        <div>
-          <h2 class="page-title">Manage Staff</h2>
-          <p style="font-size:.78rem;color:var(--text-muted)">View and manage all registered employees.</p>
-        </div>
-        <button class="ms-add-btn" id="btn-add-staff-nav" onclick="navigateTo('register')">+ Add Staff</button>
-      </div>
-
-      <!-- Staff Grid View -->
-      <div id="ms-grid-view">
-        <div id="staff-list" class="ms-staff-grid"></div>
-      </div>
-
-      <!-- Staff Detail View -->
-      <div id="ms-detail-view" hidden>
-        <button class="ms-back-btn" id="btn-ms-back">← Back</button>
-        <div class="ms-detail-layout">
-          <!-- Left: Profile Card -->
-          <div class="ms-profile-card">
-            <div class="ms-profile-avatar" id="ms-detail-avatar">?</div>
-            <div class="ms-profile-name" id="ms-detail-name">—</div>
-            <div class="ms-profile-subname" id="ms-detail-subname">—</div>
-            <div class="ms-profile-meta">
-              <span class="ms-meta-label">ROLE</span>
-              <span class="ms-meta-value" id="ms-detail-role">—</span>
-            </div>
-            <div class="ms-profile-meta">
-              <span class="ms-meta-label">ID</span>
-              <span class="ms-meta-value" id="ms-detail-id">—</span>
-            </div>
-            <div class="ms-action-btns">
-              <button class="ms-action-btn ms-btn-promote" id="ms-btn-promote">PROMOTE</button>
-              <button class="ms-action-btn ms-btn-admin" id="ms-btn-admin">ALLOW ADMIN ACCESS</button>
-              <button class="ms-action-btn ms-btn-terminate" id="ms-btn-terminate">TERMINATE</button>
-              <button class="ms-action-btn ms-btn-clockout" id="ms-btn-clockout">⏱ CLOCK OUT</button>
-            </div>
-          </div>
-          <!-- Right: Performance Chart -->
-          <div class="ms-chart-card">
-            <div class="ms-chart-header">
-              <span class="ms-chart-title" id="ms-chart-title">WEEKLY PERFORMANCE</span>
-              <div style="display:flex;align-items:center;gap:16px">
-                <div class="ms-chart-legend">
-                  <span class="ms-legend-dot" style="background:#4a6228"></span><span>Sales</span>
-                  <span class="ms-legend-dot" style="background:#c0392b;margin-left:12px"></span><span>Waste</span>
-                </div>
-                <select id="ms-perf-period" class="ms-perf-dropdown">
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
-                </select>
-              </div>
-            </div>
-            <canvas id="ms-perf-chart" style="width:100%;height:300px;display:block"></canvas>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- EDIT ITEMS -->
-    <section id="page-edit-items" class="page" data-page="edit-items" hidden>
-      <div class="page-header"><h2 class="page-title">Edit Menu Items</h2><button class="btn btn-primary btn-sm" id="btn-add-product">+ Add Product</button></div>
-      <div class="category-tabs" id="edit-cat-tabs">
-        <button class="cat-tab active" data-cat="all">All</button>
-        <button class="cat-tab" data-cat="coffee">☕ Coffee</button>
-        <button class="cat-tab" data-cat="matcha">🍵 Matcha</button>
-        <button class="cat-tab" data-cat="milktea">🧋 Milktea</button>
-        <button class="cat-tab" data-cat="food">🍽️ Food</button>
-        <button class="cat-tab" data-cat="premade">🥤 Pre Made</button>
-      </div>
-      <div class="category-tabs" id="premade-sub-tabs" style="display:none;margin-top:-8px;padding-top:6px;border-top:1px dashed var(--border)"></div>
-      <div class="search-bar" style="margin-bottom:14px">
-        <span class="search-icon">🔍</span>
-        <input id="edit-search" class="field-input search-input" type="text" placeholder="Search products…" autocomplete="off"/>
-      </div>
-      <div id="edit-items-grid" class="edit-items-list"></div>
-    </section>
-
-    <!-- PREMADE STOCK -->
-    <section id="page-premade-stock" class="page" data-page="premade-stock" hidden>
-      <div class="pm-page-header"><h2 class="pm-page-title">Pre-made Stock</h2><button class="btn pm-add-btn admin-only" id="btn-add-premade">+ Add Stock</button></div>
-      <div id="premade-grid" class="pm-stock-body"></div>
-    </section>
-
-    <!-- PROFILE -->
-    <section id="page-profile" class="page" data-page="profile" hidden>
-      <div class="page-header"><h2 class="page-title">My Profile</h2></div>
-      <div class="form-card profile-card">
-        <div class="profile-avatar-lg">👤</div>
-        <div><p class="profile-name" id="profile-name-text">—</p><p class="profile-role-badge" id="profile-role-badge">—</p><p class="profile-id" id="profile-id-text">—</p></div>
-        <hr class="divider"/>
-        <h3 class="form-section-title">Display Name</h3>
-        <div class="field-group" style="width:100%">
-          <label class="field-label" for="profile-display-name">Full Name</label>
-          <input id="profile-display-name" class="field-input" type="text" placeholder="Enter your name" maxlength="60" autocomplete="off"/>
-        </div>
-        <button class="btn btn-primary" id="btn-save-display-name" style="align-self:flex-start">Save Name</button>
-        <hr class="divider"/>
-        <h3 class="form-section-title">Change PIN</h3>
-        <div class="form-row">
-          <div class="field-group"><label class="field-label" for="current-pin">Current PIN</label><input id="current-pin" class="field-input" type="password" placeholder="••••" maxlength="6" inputmode="numeric"/></div>
-          <div class="field-group"><label class="field-label" for="new-pin">New PIN</label><input id="new-pin" class="field-input" type="password" placeholder="••••" maxlength="6" inputmode="numeric"/></div>
-        </div>
-        <button class="btn btn-primary" id="btn-change-pin">Save New PIN</button>
-        <hr class="divider"/>
-        <button class="btn btn-danger" id="btn-sign-out" style="width:100%">🚪 Sign Out</button>
-      </div>
-    </section>
-
-  </main>
-
-  <!-- ORDER PANEL -->
-  <aside id="order-panel" class="order-panel" hidden>
-    <div class="order-panel-header">
-      <div><h3 class="order-panel-title">Current Order</h3><p class="order-panel-meta" id="order-meta-label">—</p></div>
-      <button class="btn-icon" id="btn-void-order" title="Void order">🗑</button>
-    </div>
-    <div class="order-items-list" id="order-items-list">
-      <div class="order-empty" id="order-empty-state"><span class="order-empty-emoji">🛒</span><p>No items yet.<br/>Tap a product to add it.</p></div>
-    </div>
-    <div class="order-totals">
-      <div class="totals-row"><span>Subtotal</span><span id="order-subtotal">₱ 0.00</span></div>
-      <div class="totals-row" id="discount-row" hidden><span>Discount</span><span id="order-discount" class="text-green">— ₱ 0.00</span></div>
-      <div class="totals-row totals-grand"><span>Total</span><span id="order-total">₱ 0.00</span></div>
-    </div>
-    <div class="cash-tender-section">
-      <label class="field-label" for="cash-tendered">Cash Tendered</label>
-      <div class="field-wrap"><span class="field-icon">💵</span><input id="cash-tendered" class="field-input" type="number" placeholder="0.00" min="0" step="0.01"/></div>
-      <div class="change-row"><span>Change</span><span id="order-change" class="text-green">₱ 0.00</span></div>
-    </div>
-    <div class="quick-cash-btns">
-      <button class="btn-outline-small quick-cash" data-amount="50">₱50</button>
-      <button class="btn-outline-small quick-cash" data-amount="100">₱100</button>
-      <button class="btn-outline-small quick-cash" data-amount="200">₱200</button>
-      <button class="btn-outline-small quick-cash" data-amount="500">₱500</button>
-      <button class="btn-outline-small quick-cash" data-amount="1000">₱1k</button>
-      <button class="btn-outline-small quick-cash" data-amount="exact">Exact</button>
-    </div>
-    <button class="btn btn-primary btn-charge" id="btn-charge">Charge &nbsp;<span id="charge-total">₱ 0.00</span></button>
-  </aside>
-</div>
-
-<!-- ═══════════════ MODALS ═══════════════ -->
-<div id="modal-backdrop" class="modal-backdrop" hidden></div>
-
-<!-- Variant Picker -->
-<dialog id="modal-variant-picker" class="modal">
-  <div class="modal-header"><h3 class="modal-title" id="picker-title">Choose Options</h3><button class="btn-icon modal-close" data-close="modal-variant-picker">✕</button></div>
-  <div class="modal-body">
-    <div class="picker-product-info"><span class="picker-emoji" id="picker-emoji">☕</span><div><p class="picker-product-name" id="picker-product-name">—</p><p class="picker-base-price" id="picker-base-price">₱ 0.00</p></div></div>
-    <div class="picker-section" id="picker-temp-section"><p class="picker-section-label">Temperature</p><div class="picker-options" id="picker-temp-options"></div></div>
-    <div class="picker-section" id="picker-size-section"><p class="picker-section-label">Size</p><div class="picker-options" id="picker-size-options"></div></div>
-    <div class="picker-section" id="picker-addon-section"><div class="picker-addon-header"><p class="picker-section-label">Add-ons <span class="optional-tag">Optional</span></p><label class="addon-toggle-label" title="Toggle add-ons"><input type="checkbox" id="addon-toggle" checked><span class="addon-toggle-track"><span class="addon-toggle-thumb"></span></span></label></div><div class="picker-options" id="picker-addon-options"></div></div>
-    <div class="picker-section"><p class="picker-section-label">Quantity</p><div class="qty-control"><button class="qty-btn" id="qty-minus">−</button><input class="qty-display" id="qty-display" type="number" min="1" value="1" inputmode="numeric"><button class="qty-btn" id="qty-plus">+</button></div></div>
-  </div>
-  <div class="modal-footer"><p class="picker-price-preview">Item Total: <strong id="picker-total">₱ 0.00</strong></p><button class="btn btn-primary" id="btn-add-to-order">Add to Order</button></div>
-</dialog>
-
-<!-- Receipt -->
-<dialog id="modal-receipt" class="modal" style="width:min(92vw,420px);background:#fff">
-  <div style="display:flex;justify-content:flex-end;padding:8px 12px 0">
-    <button class="btn-icon modal-close" data-close="modal-receipt" style="font-size:1rem">✕</button>
-  </div>
-  <div class="modal-body" id="receipt-body" style="padding:0 20px 12px"></div>
-  <div class="modal-footer"><button class="btn btn-outline" onclick="window.print()">🖨️ Print</button><button class="btn btn-primary" id="btn-new-order">New Order →</button></div>
-</dialog>
-
-<!-- Add Stock -->
-<dialog id="modal-add-stock" class="modal modal-as">
-  <div class="as-titlebar"><span class="as-titlebar-icon">🟩</span><span class="as-titlebar-text">Add Stock</span><div class="as-titlebar-actions"><button class="as-titlebar-btn modal-close" data-close="modal-add-stock">✕</button></div></div>
-  <div class="as-subheader">ADD STOCK</div>
-  <div class="as-body">
-    <div class="as-field-group"><label class="as-label">Product name</label><input id="stock-name" class="as-input" type="text" autocomplete="off"/></div>
-    <div class="as-field-group"><label class="as-label">Expiry date</label><div class="as-expiry-row"><input id="stock-exp-month" class="as-input as-exp-part" type="text" placeholder="Month" maxlength="2" inputmode="numeric"/><input id="stock-exp-day" class="as-input as-exp-part" type="text" placeholder="Day" maxlength="2" inputmode="numeric"/><input id="stock-exp-year" class="as-input as-exp-part as-exp-year" type="text" placeholder="Year" maxlength="4" inputmode="numeric"/></div></div>
-    <div class="as-qty-row">
-      <div class="as-qty-wrap"><input id="stock-qty" class="as-qty-input" type="number" placeholder="0" min="0" step="0.01"/><span class="as-qty-unit" id="as-unit-lbl-cur">kg</span></div>
-      <span class="as-qty-divider">/</span>
-      <div class="as-qty-wrap"><input id="stock-max" class="as-qty-input" type="number" placeholder="0" min="0" step="0.01"/><span class="as-qty-unit" id="as-unit-lbl-max">kg</span></div>
-    </div>
-    <div class="as-unit-row"><label class="as-unit-label">Unit:</label><select id="stock-unit" class="as-unit-select"><option value="L">L</option><option value="kg" selected>kg</option><option value="Cup">Cup</option><option value="scoop">scoop</option><option value="pcs">pcs</option><option value="pack">pack</option><option value="g">g</option><option value="ml">ml</option></select></div>
-    <button class="as-submit-btn" id="btn-save-stock">Add Stock</button>
-  </div>
-</dialog>
-
-<!-- Log Waste -->
-<dialog id="modal-log-waste" class="modal-lw">
-  <div class="lw-header"><h2 class="lw-title">LOG WASTE</h2><button class="lw-close-btn modal-close" data-close="modal-log-waste">✕</button></div>
-  <div class="lw-body">
-    <div><label class="lw-label">Inventory Item</label><select id="waste-item-select" class="lw-input"></select></div>
-    <div><label class="lw-label">Amount</label><input id="waste-amount" class="lw-input" type="number" placeholder="0" min="0.01" step="0.01"/></div>
-    <div><label class="lw-label">Reason</label><select id="waste-reason" class="lw-input"><option value="SPILLED">Spilled</option><option value="REMAKE">Remake</option><option value="EXPIRED">Expired</option></select></div>
-    <button class="lw-submit-btn" id="btn-submit-waste">Log Waste</button>
-  </div>
-</dialog>
-
-<!-- Add Procurement Entry -->
-<dialog id="modal-add-procurement" class="modal">
-  <div class="modal-header"><h3 class="modal-title">Add Procurement Entry</h3><button class="btn-icon modal-close" data-close="modal-add-procurement">✕</button></div>
-  <div class="modal-body">
-    <div class="field-group"><label class="field-label">PO Number</label><input id="proc-po" class="field-input" type="text" placeholder="e.g. PO-1043"/></div>
-    <div class="field-group"><label class="field-label">Ingredient/Item</label><input id="proc-item" class="field-input" type="text" placeholder="e.g. Espresso Beans"/></div>
-    <div class="field-group"><label class="field-label">Supplier</label><input id="proc-supplier" class="field-input" type="text" placeholder="e.g. Metro Gaisano"/></div>
-    <div class="form-row">
-      <div class="field-group"><label class="field-label">Quantity</label><input id="proc-qty" class="field-input" type="number" placeholder="e.g. 10" min="0" step="any"/></div>
-      <div class="field-group"><label class="field-label">Unit</label><input id="proc-unit" class="field-input" type="text" placeholder="e.g. kg, L, pcs"/></div>
-    </div>
-    <div class="field-group"><label class="field-label">Unit Price (₱)</label><input id="proc-price" class="field-input" type="number" placeholder="e.g. 1250.00" min="0" step="0.01"/></div>
-    <div class="field-group"><label class="field-label">Restock Date</label><input id="proc-date" class="field-input" type="date"/></div>
-  </div>
-  <div class="modal-footer"><button class="btn btn-outline modal-close" data-close="modal-add-procurement">Cancel</button><button class="btn btn-primary" id="btn-save-procurement">Add Entry</button></div>
-</dialog>
-
-<!-- Add Custom Expense -->
-<dialog id="modal-add-custom-expense" class="modal">
-  <div class="modal-header"><h3 class="modal-title">Add Custom Expense</h3><button class="btn-icon modal-close" data-close="modal-add-custom-expense">✕</button></div>
-  <div class="modal-body">
-    <div class="field-group"><label class="field-label">Expense Name</label><input id="cexp-name" class="field-input" type="text" placeholder="e.g. Marketing, Repairs..."/></div>
-    <div class="field-group"><label class="field-label">Amount (₱)</label><input id="cexp-amount" class="field-input" type="number" placeholder="0.00" min="0" step="0.01"/></div>
-    <div class="field-group"><label class="field-label">Date</label><input id="cexp-date" class="field-input" type="date"/></div>
-    <div class="field-group"><label class="field-label">Notes (optional)</label><input id="cexp-notes" class="field-input" type="text" placeholder="Optional notes..."/></div>
-  </div>
-  <div class="modal-footer"><button class="btn btn-outline modal-close" data-close="modal-add-custom-expense">Cancel</button><button class="btn btn-primary" id="btn-save-custom-expense">Add Expense</button></div>
-</dialog>
-
-<!-- Add Product -->
-<dialog id="modal-add-product" class="modal modal-wide">
-  <div class="npm-header"><h2 class="npm-title">NEW PRODUCT MENU</h2><button class="btn-icon modal-close npm-close" data-close="modal-add-product">✕</button></div>
-  <div class="npm-body">
-    <div class="npm-section-label">1. ITEM DETAILS</div>
-    <div class="npm-cat-tiles" id="npm-cat-tiles"></div>
-    <div class="field-group npm-field"><label class="npm-label">Item Name</label><input id="prod-name" class="npm-input" type="text" placeholder="e.g. Signature Iced Latte"/></div>
-    <div class="form-row npm-field">
-      <div class="field-group" style="flex:2"><label class="npm-label">Category</label><input id="prod-cat" class="npm-input" type="text" readonly value="Coffee &amp; Espresso"/></div>
-      <div class="field-group"><label class="npm-label">Selling Price (₱)</label><input id="prod-price" class="npm-input" type="number" placeholder="0" min="0" step="0.01" value="0"/></div>
-    </div>
-    <div class="field-group npm-field"><label class="npm-label">Description</label><textarea id="prod-desc" class="npm-input npm-textarea" placeholder="Describe the drink or dish…"></textarea></div>
-    <!-- Serving Variation toggle row -->
-    <div class="npm-field npm-serving-row">
-      <span class="npm-label" style="margin:0">Serving Variation:</span>
-      <label class="toggle-label"><input type="checkbox" id="prod-has-temp" class="toggle-input" checked/><span class="toggle-pill"></span></label>
-      <div class="npm-serving-btns" id="npm-serving-btns">
-        <button type="button" class="npm-sv-btn" data-sv="HOT">HOT</button>
-        <button type="button" class="npm-sv-btn active" data-sv="BOTH">BOTH</button>
-        <button type="button" class="npm-sv-btn" data-sv="ICED">ICED</button>
-      </div>
-    </div>
-
-    <!-- Serving Variation collapsible section (temp + cup size + add-ons) -->
-    <div id="npm-variation-section">
-      <hr class="npm-divider"/>
-      <div class="npm-label npm-field">Available Cup size:</div>
-      <div class="npm-sizes-row">
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="size-small" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">SMALL</div><div class="npm-size-sub">Base Price</div></div></div>
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="size-medium" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">MEDIUM</div><input type="number" class="npm-surcharge" id="size-medium-price" value="0" min="0" step="1" placeholder="0"/></div></div>
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="size-large" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">LARGE</div><input type="number" class="npm-surcharge" id="size-large-price" value="0" min="0" step="1" placeholder="0"/></div></div>
-      </div>
-      <p class="npm-size-note">☑ SMALL = base price. MEDIUM/LARGE add a surcharge.</p>
-      <div class="npm-addons-header">
-        <span>Available Add-ons:</span>
-        <label class="toggle-label" style="margin-left:auto">
-          <span style="font-size:.75rem;font-weight:600;color:var(--text-muted);margin-right:6px">Add-ons</span>
-          <input type="checkbox" id="prod-has-addon" class="toggle-input" checked/>
-          <span class="toggle-pill"></span>
-        </label>
-      </div>
-      <div id="npm-addons-row" class="npm-addons-row"></div>
-    </div>
-    <hr class="npm-divider"/>
-    <div class="npm-section-label">2. SYNC RECIPE BUILDER</div>
-    <p class="npm-recipe-note">Select an inventory ingredient and set the amount used per order.</p>
-    <div class="npm-recipe-add-row">
-      <select id="npm-ing-select" class="npm-input npm-ing-select"><option value="">-- Select Ingredient --</option></select>
-      <input id="npm-ing-qty" class="npm-input npm-ing-qty" type="number" value="1" min="0.01" step="0.01"/>
-      <select id="npm-ing-unit" class="npm-ing-unit-select"><option value="kg">kg</option></select>
-      <button type="button" class="btn btn-primary btn-sm" id="npm-btn-add-ing">ADD</button>
-    </div>
-    <div class="npm-recipe-table-wrap"><div class="npm-recipe-table-head"><span>INGREDIENT</span><span>DEDUCTION</span></div><div id="npm-recipe-rows" class="npm-recipe-rows"></div></div>
-  </div>
-  <div class="npm-footer"><button class="btn btn-outline modal-close" data-close="modal-add-product">Discard</button><button class="btn btn-primary" id="btn-save-product">FINALIZE PRODUCT</button></div>
-</dialog>
-
-<!-- Edit Product -->
-<dialog id="modal-edit-product" class="modal modal-wide">
-  <div class="npm-header"><h2 class="npm-title">EDIT PRODUCT</h2><button class="btn-icon modal-close npm-close" data-close="modal-edit-product">✕</button></div>
-  <div class="npm-body">
-    <!-- Emoji -->
-    <div class="edit-emoji-wrap">
-      <button type="button" id="edit-emoji-btn" class="edit-emoji-btn" title="Click to change emoji"><span id="edit-emoji-display">☕</span></button>
-      <span class="edit-emoji-hint">Click emoji to change</span>
-    </div>
-    <div id="edit-emoji-picker" class="edit-emoji-picker" hidden></div>
-    <!-- Name -->
-    <div class="field-group npm-field"><label class="npm-label">Product Name</label><input id="edit-prod-name" class="npm-input" type="text" placeholder="e.g. Signature Iced Latte"/></div>
-    <!-- Category + Price -->
-    <div class="form-row npm-field">
-      <div class="field-group" style="flex:2"><label class="npm-label">Category</label><select id="edit-prod-cat" class="npm-input" style="appearance:none"></select></div>
-      <div class="field-group"><label class="npm-label">Base Price (₱)</label><input id="edit-prod-price" class="npm-input" type="number" min="0" step="0.01"/></div>
-    </div>
-    <!-- Serving Variation -->
-    <div class="npm-field npm-serving-row">
-      <span class="npm-label" style="margin:0">Serving Variation:</span>
-      <label class="toggle-label"><input type="checkbox" id="edit-has-temp" class="toggle-input" checked/><span class="toggle-pill"></span></label>
-      <div class="npm-serving-btns" id="edit-sv-btns">
-        <button type="button" class="npm-sv-btn" data-sv="HOT">HOT</button>
-        <button type="button" class="npm-sv-btn active" data-sv="BOTH">BOTH</button>
-        <button type="button" class="npm-sv-btn" data-sv="ICED">ICED</button>
-      </div>
-    </div>
-    <!-- Variation body -->
-    <div id="edit-variation-section">
-      <hr class="npm-divider"/>
-      <!-- Surcharges -->
-      <div class="form-row npm-field" id="edit-surcharge-row">
-        <div class="field-group" id="edit-hot-col"><label class="npm-label">🔥 HOT SURCHARGE (₱)</label><input id="edit-hot-surcharge" class="npm-input" type="number" value="0" min="0" step="0.01" placeholder="+₱ 0"/><p style="font-size:.68rem;color:var(--text-muted);margin-top:3px">Added on top of base price for Hot.</p></div>
-        <div class="field-group" id="edit-iced-col"><label class="npm-label">🧊 ICED SURCHARGE (₱)</label><input id="edit-iced-surcharge" class="npm-input" type="number" value="0" min="0" step="0.01" placeholder="+₱ 0"/><p style="font-size:.68rem;color:var(--text-muted);margin-top:3px">Added on top of base price for Iced.</p></div>
-      </div>
-      <p class="npm-size-note" style="margin-bottom:10px">Surcharges are added on top of the base Selling Price.</p>
-      <!-- Cup sizes -->
-      <div class="npm-label npm-field">Available Cup size:</div>
-      <div class="npm-sizes-row">
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="edit-size-small" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">SMALL</div><div class="npm-size-sub">Base Price</div></div></div>
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="edit-size-medium" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">MEDIUM</div><input type="number" class="npm-surcharge" id="edit-size-medium-price" value="0" min="0" step="1" placeholder="0"/></div></div>
-        <div class="npm-size-card"><label class="npm-size-check"><input type="checkbox" id="edit-size-large" checked/><span class="npm-check-mark">✓</span></label><span class="npm-size-icon">☕</span><div><div class="npm-size-name">LARGE</div><input type="number" class="npm-surcharge" id="edit-size-large-price" value="0" min="0" step="1" placeholder="0"/></div></div>
-      </div>
-      <p class="npm-size-note">☑ Check sizes to enable them. SMALL = base price.</p>
-      <!-- Add-ons -->
-      <div class="npm-addons-header">
-        <span>Available Add-ons:</span>
-        <label class="toggle-label" style="margin-left:auto">
-          <span style="font-size:.75rem;font-weight:600;color:var(--text-muted);margin-right:6px">Add-ons</span>
-          <input type="checkbox" id="edit-has-addon" class="toggle-input" checked/>
-          <span class="toggle-pill"></span>
-        </label>
-      </div>
-      <div id="edit-addons-row" class="npm-addons-row"></div>
-    </div>
-  </div>
-  <div class="npm-footer"><button class="btn btn-outline modal-close" data-close="modal-edit-product">Cancel</button><button class="btn btn-primary" id="btn-update-product">Save Changes</button></div>
-</dialog>
-
-<!-- Recipe Editor -->
-<dialog id="modal-recipe" class="modal">
-  <div class="modal-header" style="background:linear-gradient(135deg,#354818,#4a6228)">
-    <h3 class="modal-title" id="recipe-modal-title" style="color:#fff">Recipe</h3>
-    <button class="btn-icon modal-close" data-close="modal-recipe" style="color:#fff">✕</button>
-  </div>
-  <div class="modal-body">
-    <div class="recipe-prod-banner"><span class="recipe-prod-banner-emoji" id="recipe-prod-emoji">☕</span><span id="recipe-prod-name-lbl" style="font-weight:700;font-size:1rem">—</span></div>
-    <div class="recipe-table-head"><span>Inventory Item</span><span>Amount</span><span>Unit</span><span></span></div>
-    <div id="recipe-rows"></div>
-    <button type="button" class="recipe-add-btn" id="btn-recipe-add-ing">+ Add Ingredient</button>
-    <p class="recipe-note">💡 Amounts are deducted from inventory automatically on each confirmed sale.</p>
-  </div>
-  <div class="modal-footer"><button class="btn btn-outline modal-close" data-close="modal-recipe">Cancel</button><button class="btn btn-primary" id="btn-save-recipe">Save Recipe</button></div>
-</dialog>
-
-<!-- Add Premade -->
-<dialog id="modal-add-premade" class="modal modal-wide">
-  <div class="npm-header"><h2 class="npm-title">PRE-MADE STOCK</h2><button class="btn-icon modal-close npm-close" data-close="modal-add-premade">✕</button></div>
-  <div class="npm-body">
-    <div class="npm-section-label">1. ITEM DETAILS</div>
-    <div class="npm-cat-tiles" id="pm-cat-tiles"></div>
-    <div class="field-group npm-field"><label class="npm-label">Item Name</label><input id="pm-item-name" class="npm-input" type="text" placeholder="e.g. Croffle Batch"/></div>
-    <div class="form-row npm-field">
-      <div class="field-group"><label class="npm-label">Price for 1 (₱)</label><input id="pm-price" class="npm-input" type="number" placeholder="0.00" min="0" step="0.01" value="0"/></div>
-      <div class="field-group"><label class="npm-label">Number of items made</label><input id="pm-qty" class="npm-input" type="number" placeholder="1" min="1" step="1" value="1"/></div>
-    </div>
-    <hr class="npm-divider"/>
-    <div class="npm-section-label">1b. STORAGE TYPE</div>
-    <div class="pm-storage-btns npm-field" id="pm-storage-btns">
-      <button type="button" class="pm-storage-btn active" data-storage="fresh">🌿 Fresh</button>
-      <button type="button" class="pm-storage-btn" data-storage="safe">🧡 Safe to Stock</button>
-    </div>
-    <hr class="npm-divider"/>
-    <div class="npm-section-label">2. SYNC RECIPE BUILDER</div>
-    <div class="npm-recipe-add-row">
-      <select id="pm-ing-select" class="npm-input npm-ing-select"><option value="">-- Select Ingredient --</option></select>
-      <input id="pm-ing-qty" class="npm-input npm-ing-qty" type="number" value="1" min="0.01" step="0.01"/>
-      <select id="pm-ing-unit" class="npm-ing-unit-select"><option value="kg">kg</option></select>
-      <button type="button" class="btn btn-primary btn-sm" id="pm-btn-add-ing">ADD</button>
-    </div>
-    <div class="npm-recipe-table-wrap"><div class="npm-recipe-table-head"><span>INGREDIENT</span><span>DEDUCTION</span></div><div id="pm-recipe-rows" class="npm-recipe-rows"></div></div>
-  </div>
-  <div class="npm-footer"><button class="btn btn-outline modal-close" data-close="modal-add-premade">Discard</button><button class="btn btn-primary" id="pm-btn-finalize">FINALIZE PRODUCT</button></div>
-</dialog>
-
-<!-- Confirm -->
-<dialog id="modal-sales-detail" class="modal modal-wide" style="max-width:680px;width:min(96vw,680px)">
-  <div class="modal-header" style="background:var(--accent);color:#fff;border-radius:var(--r-lg) var(--r-lg) 0 0;padding:14px 20px;display:flex;align-items:center;justify-content:space-between">
-    <span style="font-weight:700;font-size:1rem" id="modal-sd-title">Sales Detail</span>
-    <button class="btn-icon modal-close" data-close="modal-sales-detail" style="color:#fff;font-size:1.1rem">✕</button>
-  </div>
-  <div class="modal-body" id="modal-sd-body" style="padding:20px;max-height:78vh;overflow-y:auto"></div>
-</dialog>
-
-<dialog id="modal-invoice-preview" class="modal" style="width:min(92vw,420px);background:#fff">
-  <div style="display:flex;justify-content:flex-end;padding:10px 14px 0">
-    <button class="btn-icon modal-close" data-close="modal-invoice-preview" style="font-size:1rem">✕</button>
-  </div>
-  <div class="modal-body" id="invoice-preview-body" style="padding:0 20px 12px"></div>
-</dialog>
-
-
-<dialog id="modal-confirm" class="modal">
-  <div class="modal-header"><h3 class="modal-title" id="confirm-title">Confirm</h3></div>
-  <div class="modal-body"><p id="confirm-message">Are you sure?</p></div>
-  <div class="modal-footer"><button class="btn btn-outline" id="btn-confirm-cancel">Cancel</button><button class="btn btn-danger" id="btn-confirm-ok">Confirm</button></div>
-</dialog>
-
-<!-- Resolve Expired -->
-<dialog id="modal-resolve-expired" class="modal modal-as">
-  <div class="as-titlebar"><span class="as-titlebar-icon">⏰</span><span class="as-titlebar-text">Resolve Expired</span><div class="as-titlebar-actions"><button class="as-titlebar-btn modal-close" data-close="modal-resolve-expired">✕</button></div></div>
-  <div class="as-subheader" style="background:linear-gradient(90deg,#7a2828,#9a3030)">RESOLVE EXPIRED ITEM</div>
-  <div class="as-body" style="gap:10px">
-    <p style="font-size:1.05rem;font-weight:800;color:var(--espresso)" id="resolve-item-name">—</p>
-    <p style="font-size:.8rem;color:var(--text-muted)" id="resolve-item-meta">—</p>
-    <button class="resolve-waste-btn" id="btn-resolve-waste">Waste (Expired)</button>
-  </div>
-</dialog>
-
-<!-- TOAST -->
-<div id="toast" class="toast"></div>
-<!-- Category Edit Popover -->
-<dialog id="cat-edit-popover" class="cat-edit-popover">
-  <div class="cat-edit-title">Edit Category</div>
-  <div>
-    <label class="cat-edit-title" style="margin-bottom:4px;display:block">Name</label>
-    <input id="cat-edit-name" class="cat-edit-input" type="text" placeholder="Category name"/>
-  </div>
-  <div>
-    <label class="cat-edit-title" style="margin-bottom:6px;display:block">Emoji</label>
-    <div class="cat-emoji-grid" id="cat-emoji-grid"></div>
-    <div class="cat-edit-row" style="margin-top:6px">
-      <input id="cat-edit-emoji-custom" class="cat-edit-input" type="text" placeholder="Or type custom emoji…" maxlength="4" style="font-size:1.2rem;text-align:center"/>
-    </div>
-  </div>
-  <div class="cat-popover-btns">
-    <button class="cat-popover-save" id="cat-popover-save">Save</button>
-    <button class="cat-popover-del" id="cat-popover-del">Delete</button>
-    <button class="cat-popover-cancel" id="cat-popover-cancel">Cancel</button>
-  </div>
-</dialog>
-<div id="cat-popover-backdrop" style="display:none;position:fixed;inset:0;z-index:999"></div>
-<style>@keyframes overlayTimeout{0%,85%{opacity:1;pointer-events:all}100%{opacity:0;pointer-events:none;visibility:hidden}}#db-loading-overlay{animation:overlayTimeout 4s forwards}</style>
-<div id="db-loading-overlay" style="position:fixed;inset:0;background:#f5f0e8;display:flex;align-items:center;justify-content:center;z-index:9999;font-family:DM Sans,sans-serif;flex-direction:column;gap:12px"><div style="font-size:2rem">☕</div><div style="font-size:0.9rem;color:#4a6228;letter-spacing:0.08em;font-weight:600">LOADING SYNC POS…</div></div>
-<!-- Firebase v9 compat SDKs (must load before firebase-db.js) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<!-- Firebase DB layer (replaces localStorage DB) -->
-<script src="firebase-db.js"></script>
-<script src="app.js"></script>
-<!-- Loading overlay is dismissed by initApp() in app.js after Firestore preload -->
-</body>
-</html>
+})();
